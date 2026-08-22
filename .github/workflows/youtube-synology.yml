@@ -1,4 +1,4 @@
-name: Download YouTube APK
+name: Download YouTube APK to Synology
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
       # 1. CHECKOUT
       # ==================================================
 
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
 
@@ -31,20 +31,22 @@ jobs:
             exit 1
           fi
 
-          VERSION="$(cat version.txt | tr -d '\r\n' | xargs)"
+          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
 
           if [ -z "$VERSION" ]; then
             echo "ERROR: version.txt rỗng"
             exit 1
           fi
 
-          echo "VERSION=$VERSION"
+          echo "======================================"
+          echo "YouTube VERSION: $VERSION"
+          echo "======================================"
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
 
       # ==================================================
-      # 3. NODE
+      # 3. SETUP NODE
       # ==================================================
 
       - name: Setup Node.js
@@ -54,23 +56,52 @@ jobs:
 
 
       # ==================================================
-      # 4. INSTALL
+      # 4. INSTALL PLAYWRIGHT
       # ==================================================
 
-      - name: Install dependencies
+      - name: Install Playwright
         shell: bash
         run: |
           set -e
 
-          npm install
+          echo "======================================"
+          echo "Installing Playwright"
+          echo "======================================"
+
+          if [ ! -f "package.json" ]; then
+            npm init -y
+          fi
+
+          npm install playwright
 
           npx playwright install chromium
 
           npx playwright install-deps chromium
 
+          echo "Playwright installed successfully."
+
 
       # ==================================================
-      # 5. DOWNLOAD APK
+      # 5. CHECK SCRIPT
+      # ==================================================
+
+      - name: Check downloader
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f "scripts/apkmirror.js" ]; then
+            echo "ERROR: Không tìm thấy:"
+            echo "scripts/apkmirror.js"
+            exit 1
+          fi
+
+          echo "Downloader:"
+          ls -lh scripts/apkmirror.js
+
+
+      # ==================================================
+      # 6. DOWNLOAD APK
       # ==================================================
 
       - name: Download YouTube APK
@@ -81,7 +112,7 @@ jobs:
           set -e
 
           echo "======================================"
-          echo "Downloading YouTube APK"
+          echo "START APK DOWNLOAD"
           echo "VERSION: $VERSION"
           echo "======================================"
 
@@ -90,17 +121,20 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK không tồn tại:"
+            echo "ERROR: APK không được tạo:"
             echo "$APK"
             exit 1
           fi
 
-          echo "APK found:"
+          echo "======================================"
+          echo "APK DOWNLOADED"
+          echo "======================================"
+
           ls -lh "$APK"
 
 
       # ==================================================
-      # 6. CHECK APK
+      # 7. VERIFY APK
       # ==================================================
 
       - name: Verify APK
@@ -112,24 +146,27 @@ jobs:
 
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
-          echo "Checking APK..."
-
-          file "$APK"
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: Không tìm thấy APK"
+            exit 1
+          fi
 
           SIZE=$(stat -c%s "$APK")
 
           echo "APK size: $SIZE bytes"
 
           if [ "$SIZE" -lt 10485760 ]; then
-            echo "ERROR: APK quá nhỏ"
+            echo "ERROR: APK nhỏ hơn 10 MB"
             exit 1
           fi
 
-          echo "APK OK"
+          file "$APK"
+
+          echo "APK verification OK."
 
 
       # ==================================================
-      # 7. SETUP SSH
+      # 8. SETUP SSH
       # ==================================================
 
       - name: Setup Synology SSH
@@ -142,21 +179,21 @@ jobs:
           set -e
 
           echo "======================================"
-          echo "Setup Synology SSH"
+          echo "SETUP SYNOLOGY SSH"
           echo "======================================"
 
           if [ -z "$SYNOLOGY_HOST" ]; then
-            echo "ERROR: SYNOLOGY_HOST chưa được cấu hình"
+            echo "ERROR: Thiếu SYNOLOGY_HOST"
             exit 1
           fi
 
           if [ -z "$SYNOLOGY_SSH_PORT" ]; then
-            echo "ERROR: SYNOLOGY_SSH_PORT chưa được cấu hình"
+            echo "ERROR: Thiếu SYNOLOGY_SSH_PORT"
             exit 1
           fi
 
           if [ -z "$SYNOLOGY_SSH_KEY" ]; then
-            echo "ERROR: SYNOLOGY_SSH_KEY chưa được cấu hình"
+            echo "ERROR: Thiếu SYNOLOGY_SSH_KEY"
             exit 1
           fi
 
@@ -173,10 +210,13 @@ jobs:
 
           chmod 644 "$HOME/.ssh/known_hosts"
 
-          echo "Host: $SYNOLOGY_HOST"
-          echo "Port: $SYNOLOGY_SSH_PORT"
+          echo "SSH host:"
+          echo "$SYNOLOGY_HOST"
 
-          echo "Getting SSH host key..."
+          echo "SSH port:"
+          echo "$SYNOLOGY_SSH_PORT"
+
+          echo "Getting host key..."
 
           ssh-keyscan \
             -T 15 \
@@ -185,15 +225,15 @@ jobs:
             >> "$HOME/.ssh/known_hosts"
 
           if [ ! -s "$HOME/.ssh/known_hosts" ]; then
-            echo "ERROR: ssh-keyscan không lấy được host key"
+            echo "ERROR: Không lấy được SSH host key"
             exit 1
           fi
 
-          echo "SSH host key added."
+          echo "SSH host key OK."
 
 
       # ==================================================
-      # 8. TEST SSH
+      # 9. TEST SSH
       # ==================================================
 
       - name: Test Synology SSH
@@ -206,7 +246,7 @@ jobs:
           set -e
 
           if [ -z "$SYNOLOGY_USER" ]; then
-            echo "ERROR: SYNOLOGY_USER chưa được cấu hình"
+            echo "ERROR: Thiếu SYNOLOGY_USER"
             exit 1
           fi
 
@@ -222,11 +262,13 @@ jobs:
             "$SYNOLOGY_USER@$SYNOLOGY_HOST" \
             "echo SSH_OK"
 
-          echo "SSH connection OK"
+          echo "======================================"
+          echo "SSH CONNECTION OK"
+          echo "======================================"
 
 
       # ==================================================
-      # 9. CREATE SYNLOGY DIRECTORY
+      # 10. CREATE REMOTE DIRECTORY
       # ==================================================
 
       - name: Prepare Synology directory
@@ -240,25 +282,26 @@ jobs:
           set -e
 
           if [ -z "$SYNOLOGY_PATH" ]; then
-            echo "ERROR: SYNOLOGY_PATH chưa được cấu hình"
+            echo "ERROR: Thiếu SYNOLOGY_PATH"
             exit 1
           fi
 
-          echo "Synology path:"
+          echo "Remote path:"
           echo "$SYNOLOGY_PATH"
 
           ssh \
             -i "$HOME/.ssh/synology_key" \
             -p "$SYNOLOGY_SSH_PORT" \
             -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
             "$SYNOLOGY_USER@$SYNOLOGY_HOST" \
             "mkdir -p '$SYNOLOGY_PATH'"
 
-          echo "Directory ready."
+          echo "Remote directory ready."
 
 
       # ==================================================
-      # 10. UPLOAD APK
+      # 11. UPLOAD APK
       # ==================================================
 
       - name: Upload APK to Synology
@@ -275,13 +318,13 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Không tìm thấy:"
+            echo "ERROR: Không tìm thấy APK:"
             echo "$APK"
             exit 1
           fi
 
           echo "======================================"
-          echo "Uploading APK"
+          echo "UPLOAD APK"
           echo "FILE:"
           echo "$APK"
           echo "DESTINATION:"
@@ -299,14 +342,16 @@ jobs:
             "$APK" \
             "$SYNOLOGY_USER@$SYNOLOGY_HOST:$SYNOLOGY_PATH/"
 
-          echo "Upload completed."
+          echo "======================================"
+          echo "UPLOAD COMPLETED"
+          echo "======================================"
 
 
       # ==================================================
-      # 11. VERIFY FILE ON SYNOLOGY
+      # 12. VERIFY REMOTE FILE
       # ==================================================
 
-      - name: Verify Synology file
+      - name: Verify Synology APK
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -319,7 +364,7 @@ jobs:
 
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
-          echo "Checking remote file..."
+          echo "Checking remote APK..."
 
           ssh \
             -i "$HOME/.ssh/synology_key" \
@@ -331,12 +376,12 @@ jobs:
 
           echo "======================================"
           echo "SUCCESS"
-          echo "APK đã upload lên Synology."
+          echo "APK EXISTS ON SYNOLOGY"
           echo "======================================"
 
 
       # ==================================================
-      # 12. CLEAN SSH
+      # 13. CLEAN SSH
       # ==================================================
 
       - name: Cleanup SSH
@@ -344,3 +389,4 @@ jobs:
         shell: bash
         run: |
           rm -f "$HOME/.ssh/synology_key"
+          rm -f "$HOME/.ssh/known_hosts"
