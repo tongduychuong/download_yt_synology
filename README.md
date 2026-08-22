@@ -1,46 +1,18 @@
 # YouTube APKMirror → Synology SSH
 
-GitHub Actions tự động:
-1. Tìm YouTube stable nodpi mới nhất trên APKMirror.
-2. Tải APK.
-3. Tạo SHA-256.
-4. Upload APK lên Synology bằng SSH/SCP.
-5. Bỏ qua nếu version đã tồn tại.
+## Files
+- `.github/workflows/youtube-synology.yml`
+- `scripts/find_youtube.py`
+- `scripts/download_youtube.py`
 
 ## GitHub Secrets
+Create:
+- `SYNOLOGY_HOST`
+- `SYNOLOGY_SSH_PORT` (usually `22`)
+- `SYNOLOGY_USER`
+- `SYNOLOGY_SSH_KEY` (private Ed25519 key)
+- `SYNOLOGY_PATH` (example: `/volume1/YouTube`)
 
-Tạo các secrets:
+The workflow uses `scp -O` because Synology may return `subsystem request failed on channel 0` with SFTP-based SCP.
 
-- `SYNOLOGY_HOST` — IP/domain Synology
-- `SYNOLOGY_SSH_PORT` — thường `22`
-- `SYNOLOGY_USER` — user SSH
-- `SYNOLOGY_SSH_KEY` — private Ed25519 key
-- `SYNOLOGY_PATH` — ví dụ `/volume1/YouTube`
-
-## Synology
-
-Bật SSH tại:
-
-Control Panel → Terminal & SNMP → Enable SSH service
-
-Đảm bảo user có quyền ghi vào thư mục:
-
-`/volume1/YouTube`
-
-## SSH key
-
-Tạo key:
-
-```bash
-ssh-keygen -t ed25519 -C "github-youtube"
-```
-
-Đưa public key vào Synology và private key vào GitHub Secret `SYNOLOGY_SSH_KEY`.
-
-## Chạy
-
-Vào:
-
-GitHub → Actions → Download YouTube APKMirror → Run workflow
-
-Workflow cũng tự chạy mỗi ngày.
+Run manually from GitHub Actions or let the daily schedule run.
