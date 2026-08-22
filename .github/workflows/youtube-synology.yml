@@ -1,0 +1,103 @@
+name: Download YouTube APKMirror → Synology
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 2 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  download-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip openssh-client
+          python3 -m pip install --upgrade pip
+          pip install requests beautifulsoup4 lxml
+
+      - name: Find latest YouTube APK
+        id: find
+        run: |
+          python3 scripts/find_youtube.py
+
+      - name: Download APK from APKMirror
+        env:
+          RELEASE_URL: ${{ steps.find.outputs.release_url }}
+        run: |
+          python3 scripts/download_youtube.py
+
+      - name: Calculate SHA256
+        run: |
+          sha256sum "YouTube-$(cat version.txt).apk" | tee sha256.txt
+
+      - name: Setup SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SYNOLOGY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/synology_key
+          chmod 600 ~/.ssh/synology_key
+          ssh-keyscan -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Create directory on Synology
+        run: |
+          ssh -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "mkdir -p '${{ secrets.SYNOLOGY_PATH }}'"
+
+      - name: Check existing version
+        id: check
+        run: |
+          VERSION="$(cat version.txt)"
+          if ssh -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "test -f '${{ secrets.SYNOLOGY_PATH }}/YouTube-${VERSION}.apk'"
+          then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "YouTube ${VERSION} already exists on Synology."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload APK to Synology
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          VERSION="$(cat version.txt)"
+          scp -i ~/.ssh/synology_key \
+            -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "YouTube-${VERSION}.apk" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
+
+      - name: Upload metadata
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          scp -i ~/.ssh/synology_key \
+            -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            version.txt sha256.txt \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
+
+      - name: Verify file on Synology
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          VERSION="$(cat version.txt)"
+          ssh -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "ls -lh '${{ secrets.SYNOLOGY_PATH }}/YouTube-${VERSION}.apk'"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/synology_key
+          rm -f *.apk
