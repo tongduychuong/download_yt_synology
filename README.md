@@ -1,18 +1,13 @@
-# YouTube APKMirror → Synology SSH
+# YouTube APKMirror → Synology
 
-## Files
-- `.github/workflows/youtube-synology.yml`
-- `scripts/find_youtube.py`
-- `scripts/download_youtube.py`
+Version lấy duy nhất từ `version.txt` trên GitHub.
 
-## GitHub Secrets
-Create:
-- `SYNOLOGY_HOST`
-- `SYNOLOGY_SSH_PORT` (usually `22`)
-- `SYNOLOGY_USER`
-- `SYNOLOGY_SSH_KEY` (private Ed25519 key)
-- `SYNOLOGY_PATH` (example: `/volume1/YouTube`)
+- Nếu version có Stable và Beta: chọn Stable.
+- Nếu không có Stable nhưng có Beta: chọn Beta.
+- Bỏ qua SECONDARY, ALPHA, RC.
+- Tên file: `com.google.android.youtube-VERSION-all.apk`.
+- Không lưu `version.txt` hoặc `sha256.txt` trên Synology.
+- Upload bằng `scp -O` để tránh lỗi SFTP subsystem.
 
-The workflow uses `scp -O` because Synology may return `subsystem request failed on channel 0` with SFTP-based SCP.
-
-Run manually from GitHub Actions or let the daily schedule run.
+Secrets:
+`SYNOLOGY_HOST`, `SYNOLOGY_SSH_PORT`, `SYNOLOGY_USER`, `SYNOLOGY_SSH_KEY`, `SYNOLOGY_PATH`.
