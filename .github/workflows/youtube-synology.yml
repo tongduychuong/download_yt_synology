@@ -1,131 +1,346 @@
-name: YouTube APKMirror to Synology
+name: Download YouTube APK
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "30 2 * * *"
-
-permissions:
-  contents: read
 
 jobs:
-  download-upload:
+  download:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==================================================
+      # 1. CHECKOUT
+      # ==================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+
+      # ==================================================
+      # 2. READ VERSION
+      # ==================================================
+
+      - name: Read version.txt
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f "version.txt" ]; then
+            echo "ERROR: Không tìm thấy version.txt"
+            exit 1
+          fi
+
+          VERSION="$(cat version.txt | tr -d '\r\n' | xargs)"
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: version.txt rỗng"
+            exit 1
+          fi
+
+          echo "VERSION=$VERSION"
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+
+      # ==================================================
+      # 3. NODE
+      # ==================================================
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install Playwright
-        run: |
-          npm install playwright
-          npx playwright install --with-deps chromium
 
-      - name: Read version
-        id: version
+      # ==================================================
+      # 4. INSTALL
+      # ==================================================
+
+      - name: Install dependencies
+        shell: bash
         run: |
-          VERSION="$(tr -d '[:space:]' < version.txt)"
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Invalid version.txt: $VERSION"
+          set -e
+
+          npm install
+
+          npx playwright install chromium
+
+          npx playwright install-deps chromium
+
+
+      # ==================================================
+      # 5. DOWNLOAD APK
+      # ==================================================
+
+      - name: Download YouTube APK
+        shell: bash
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "Downloading YouTube APK"
+          echo "VERSION: $VERSION"
+          echo "======================================"
+
+          node scripts/apkmirror.js
+
+          APK="com.google.android.youtube-${VERSION}-all.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK không tồn tại:"
+            echo "$APK"
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Find Stable or Beta and download APK
-        id: apk
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: node scripts/apkmirror.js
+          echo "APK found:"
+          ls -lh "$APK"
+
+
+      # ==================================================
+      # 6. CHECK APK
+      # ==================================================
 
       - name: Verify APK
+        shell: bash
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ env.VERSION }}
         run: |
-          FILE="com.google.android.youtube-${VERSION}-all.apk"
-          test -f "$FILE"
-          SIZE=$(stat -c%s "$FILE")
-          echo "Size: $SIZE bytes"
-          if [ "$SIZE" -lt 10000000 ]; then
-            echo "APK is too small"
+          set -e
+
+          APK="com.google.android.youtube-${VERSION}-all.apk"
+
+          echo "Checking APK..."
+
+          file "$APK"
+
+          SIZE=$(stat -c%s "$APK")
+
+          echo "APK size: $SIZE bytes"
+
+          if [ "$SIZE" -lt 10485760 ]; then
+            echo "ERROR: APK quá nhỏ"
             exit 1
           fi
-          unzip -t "$FILE" >/dev/null
 
-      - name: SHA256 check
+          echo "APK OK"
+
+
+      # ==================================================
+      # 7. SETUP SSH
+      # ==================================================
+
+      - name: Setup Synology SSH
+        shell: bash
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          SYNOLOGY_HOST: ${{ secrets.SYNOLOGY_HOST }}
+          SYNOLOGY_SSH_PORT: ${{ secrets.SYNOLOGY_SSH_PORT }}
+          SYNOLOGY_SSH_KEY: ${{ secrets.SYNOLOGY_SSH_KEY }}
         run: |
-          sha256sum "com.google.android.youtube-${VERSION}-all.apk"
+          set -e
 
-      - name: Setup SSH
-        env:
-          SSH_KEY: ${{ secrets.SYNOLOGY_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/synology_key
-          chmod 600 ~/.ssh/synology_key
-          ssh-keyscan -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            "${{ secrets.SYNOLOGY_HOST }}" >> ~/.ssh/known_hosts
+          echo "======================================"
+          echo "Setup Synology SSH"
+          echo "======================================"
 
-      - name: Test SSH
-        run: |
-          ssh -i ~/.ssh/synology_key \
-            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
-            "echo SSH connection OK"
-
-      - name: Create destination
-        run: |
-          ssh -i ~/.ssh/synology_key \
-            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
-            "mkdir -p '${{ secrets.SYNOLOGY_PATH }}'"
-
-      - name: Check existing APK
-        id: exists
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          FILE="com.google.android.youtube-${VERSION}-all.apk"
-          if ssh -i ~/.ssh/synology_key \
-            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
-            "test -f '${{ secrets.SYNOLOGY_PATH }}/${FILE}'"; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "$FILE already exists"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$SYNOLOGY_HOST" ]; then
+            echo "ERROR: SYNOLOGY_HOST chưa được cấu hình"
+            exit 1
           fi
 
-      - name: Upload APK
-        if: steps.exists.outputs.exists != 'true'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          FILE="com.google.android.youtube-${VERSION}-all.apk"
-          scp -O \
-            -i ~/.ssh/synology_key \
-            -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            "$FILE" \
-            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
+          if [ -z "$SYNOLOGY_SSH_PORT" ]; then
+            echo "ERROR: SYNOLOGY_SSH_PORT chưa được cấu hình"
+            exit 1
+          fi
 
-      - name: Verify remote file
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          FILE="com.google.android.youtube-${VERSION}-all.apk"
-          ssh -i ~/.ssh/synology_key \
-            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
-            "ls -lh '${{ secrets.SYNOLOGY_PATH }}/${FILE}'"
+          if [ -z "$SYNOLOGY_SSH_KEY" ]; then
+            echo "ERROR: SYNOLOGY_SSH_KEY chưa được cấu hình"
+            exit 1
+          fi
 
-      - name: Cleanup
+          mkdir -p "$HOME/.ssh"
+
+          chmod 700 "$HOME/.ssh"
+
+          printf '%s\n' "$SYNOLOGY_SSH_KEY" \
+            > "$HOME/.ssh/synology_key"
+
+          chmod 600 "$HOME/.ssh/synology_key"
+
+          touch "$HOME/.ssh/known_hosts"
+
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+          echo "Host: $SYNOLOGY_HOST"
+          echo "Port: $SYNOLOGY_SSH_PORT"
+
+          echo "Getting SSH host key..."
+
+          ssh-keyscan \
+            -T 15 \
+            -p "$SYNOLOGY_SSH_PORT" \
+            "$SYNOLOGY_HOST" \
+            >> "$HOME/.ssh/known_hosts"
+
+          if [ ! -s "$HOME/.ssh/known_hosts" ]; then
+            echo "ERROR: ssh-keyscan không lấy được host key"
+            exit 1
+          fi
+
+          echo "SSH host key added."
+
+
+      # ==================================================
+      # 8. TEST SSH
+      # ==================================================
+
+      - name: Test Synology SSH
+        shell: bash
+        env:
+          SYNOLOGY_HOST: ${{ secrets.SYNOLOGY_HOST }}
+          SYNOLOGY_SSH_PORT: ${{ secrets.SYNOLOGY_SSH_PORT }}
+          SYNOLOGY_USER: ${{ secrets.SYNOLOGY_USER }}
+        run: |
+          set -e
+
+          if [ -z "$SYNOLOGY_USER" ]; then
+            echo "ERROR: SYNOLOGY_USER chưa được cấu hình"
+            exit 1
+          fi
+
+          echo "Testing SSH..."
+
+          ssh \
+            -i "$HOME/.ssh/synology_key" \
+            -p "$SYNOLOGY_SSH_PORT" \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            "$SYNOLOGY_USER@$SYNOLOGY_HOST" \
+            "echo SSH_OK"
+
+          echo "SSH connection OK"
+
+
+      # ==================================================
+      # 9. CREATE SYNLOGY DIRECTORY
+      # ==================================================
+
+      - name: Prepare Synology directory
+        shell: bash
+        env:
+          SYNOLOGY_HOST: ${{ secrets.SYNOLOGY_HOST }}
+          SYNOLOGY_SSH_PORT: ${{ secrets.SYNOLOGY_SSH_PORT }}
+          SYNOLOGY_USER: ${{ secrets.SYNOLOGY_USER }}
+          SYNOLOGY_PATH: ${{ secrets.SYNOLOGY_PATH }}
+        run: |
+          set -e
+
+          if [ -z "$SYNOLOGY_PATH" ]; then
+            echo "ERROR: SYNOLOGY_PATH chưa được cấu hình"
+            exit 1
+          fi
+
+          echo "Synology path:"
+          echo "$SYNOLOGY_PATH"
+
+          ssh \
+            -i "$HOME/.ssh/synology_key" \
+            -p "$SYNOLOGY_SSH_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$SYNOLOGY_USER@$SYNOLOGY_HOST" \
+            "mkdir -p '$SYNOLOGY_PATH'"
+
+          echo "Directory ready."
+
+
+      # ==================================================
+      # 10. UPLOAD APK
+      # ==================================================
+
+      - name: Upload APK to Synology
+        shell: bash
+        env:
+          VERSION: ${{ env.VERSION }}
+          SYNOLOGY_HOST: ${{ secrets.SYNOLOGY_HOST }}
+          SYNOLOGY_SSH_PORT: ${{ secrets.SYNOLOGY_SSH_PORT }}
+          SYNOLOGY_USER: ${{ secrets.SYNOLOGY_USER }}
+          SYNOLOGY_PATH: ${{ secrets.SYNOLOGY_PATH }}
+        run: |
+          set -e
+
+          APK="com.google.android.youtube-${VERSION}-all.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: Không tìm thấy:"
+            echo "$APK"
+            exit 1
+          fi
+
+          echo "======================================"
+          echo "Uploading APK"
+          echo "FILE:"
+          echo "$APK"
+          echo "DESTINATION:"
+          echo "$SYNOLOGY_PATH"
+          echo "======================================"
+
+          scp \
+            -O \
+            -i "$HOME/.ssh/synology_key" \
+            -P "$SYNOLOGY_SSH_PORT" \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            "$APK" \
+            "$SYNOLOGY_USER@$SYNOLOGY_HOST:$SYNOLOGY_PATH/"
+
+          echo "Upload completed."
+
+
+      # ==================================================
+      # 11. VERIFY FILE ON SYNOLOGY
+      # ==================================================
+
+      - name: Verify Synology file
+        shell: bash
+        env:
+          VERSION: ${{ env.VERSION }}
+          SYNOLOGY_HOST: ${{ secrets.SYNOLOGY_HOST }}
+          SYNOLOGY_SSH_PORT: ${{ secrets.SYNOLOGY_SSH_PORT }}
+          SYNOLOGY_USER: ${{ secrets.SYNOLOGY_USER }}
+          SYNOLOGY_PATH: ${{ secrets.SYNOLOGY_PATH }}
+        run: |
+          set -e
+
+          APK="com.google.android.youtube-${VERSION}-all.apk"
+
+          echo "Checking remote file..."
+
+          ssh \
+            -i "$HOME/.ssh/synology_key" \
+            -p "$SYNOLOGY_SSH_PORT" \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 \
+            "$SYNOLOGY_USER@$SYNOLOGY_HOST" \
+            "ls -lh '$SYNOLOGY_PATH/$APK'"
+
+          echo "======================================"
+          echo "SUCCESS"
+          echo "APK đã upload lên Synology."
+          echo "======================================"
+
+
+      # ==================================================
+      # 12. CLEAN SSH
+      # ==================================================
+
+      - name: Cleanup SSH
         if: always()
+        shell: bash
         run: |
-          rm -f ~/.ssh/synology_key
-          rm -f *.apk
+          rm -f "$HOME/.ssh/synology_key"
