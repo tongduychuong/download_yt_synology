@@ -25,22 +25,26 @@ function sleep(ms) {
 }
 
 
-function isBadRelease(value) {
+function isBad(value) {
 
-    const text = value.toLowerCase();
+    const text =
+        value.toLowerCase();
 
     return (
         text.includes("secondary") ||
         text.includes("alpha") ||
         text.includes("release-candidate") ||
-        /\brc\b/.test(text)
+        /\brc\b/.test(text) ||
+        text.includes("bundle") ||
+        text.includes("splits")
     );
 }
 
 
 function isBeta(value) {
 
-    const text = value.toLowerCase();
+    const text =
+        value.toLowerCase();
 
     return (
         text.includes(" beta") ||
@@ -53,60 +57,79 @@ function isBeta(value) {
 
 async function getLinks(page) {
 
-    return await page.locator("a[href]").evaluateAll(
-        elements => elements.map(element => ({
-            text: (
-                element.innerText || ""
-            ).trim(),
+    return await page
+        .locator("a[href]")
+        .evaluateAll(
+            elements =>
+                elements.map(
+                    element => ({
+                        text:
+                            (
+                                element.innerText ||
+                                ""
+                            ).trim(),
 
-            href: element.href
-        }))
-    );
+                        href:
+                            element.href
+                    })
+                )
+        );
 
 }
 
 
 async function main() {
 
-    const browser = await chromium.launch({
+    // ======================================================
+    // BROWSER
+    // ======================================================
 
-        headless: true,
+    const browser =
+        await chromium.launch({
 
-        args: [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-blink-features=AutomationControlled"
-        ]
+            headless: true,
 
-    });
+            args: [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
 
-
-    const context = await browser.newContext({
-
-        userAgent: USER_AGENT,
-
-        locale: "en-US",
-
-        viewport: {
-            width: 1366,
-            height: 900
-        },
-
-        extraHTTPHeaders: {
-            "Accept-Language":
-                "en-US,en;q=0.9"
-        }
-
-    });
+        });
 
 
-    const page = await context.newPage();
+    const context =
+        await browser.newContext({
+
+            userAgent:
+                USER_AGENT,
+
+            locale:
+                "en-US",
+
+            viewport: {
+                width: 1366,
+                height: 900
+            },
+
+            extraHTTPHeaders: {
+
+                "Accept-Language":
+                    "en-US,en;q=0.9"
+
+            }
+
+        });
+
+
+    const page =
+        await context.newPage();
 
 
     try {
 
         // ==================================================
-        // 1. SEARCH APKMIRROR
+        // 1. SEARCH VERSION
         // ==================================================
 
         console.log("");
@@ -115,12 +138,12 @@ async function main() {
         );
 
         console.log(
-            "SEARCH VERSION:",
+            "VERSION:",
             VERSION
         );
 
         console.log(
-            "SEARCH URL:",
+            "SEARCH:",
             SEARCH_URL
         );
 
@@ -144,15 +167,21 @@ async function main() {
         await sleep(3000);
 
 
+        // ==================================================
+        // 2. FIND STABLE / BETA RELEASE
+        // ==================================================
+
         const searchLinks =
             await getLinks(page);
 
 
-        const releases = [];
+        const releases =
+            [];
 
 
         for (
-            const item of searchLinks
+            const item
+            of searchLinks
         ) {
 
             const combined =
@@ -183,20 +212,22 @@ async function main() {
                     VERSION.toLowerCase()
                 ) &&
                 !combined.includes(
-                    VERSION.replace(
-                        /\./g,
-                        "-"
-                    ).toLowerCase()
+                    VERSION
+                        .replace(
+                            /\./g,
+                            "-"
+                        )
+                        .toLowerCase()
                 )
             ) {
                 continue;
             }
 
 
+            // Không lấy secondary,
+            // alpha, rc, bundle, splits
             if (
-                isBadRelease(
-                    combined
-                )
+                isBad(combined)
             ) {
                 continue;
             }
@@ -210,7 +241,10 @@ async function main() {
                         : "stable",
 
                 href:
-                    item.href
+                    item.href,
+
+                text:
+                    item.text
 
             });
 
@@ -218,20 +252,23 @@ async function main() {
 
 
         // ==================================================
-        // UNIQUE RELEASES
+        // REMOVE DUPLICATE
         // ==================================================
 
-        const uniqueReleases = [];
+        const uniqueReleases =
+            [];
 
-        const seenReleases = new Set();
+        const releaseSeen =
+            new Set();
 
 
         for (
-            const item of releases
+            const item
+            of releases
         ) {
 
             if (
-                seenReleases.has(
+                releaseSeen.has(
                     item.href
                 )
             ) {
@@ -239,7 +276,7 @@ async function main() {
             }
 
 
-            seenReleases.add(
+            releaseSeen.add(
                 item.href
             );
 
@@ -258,7 +295,8 @@ async function main() {
 
 
         for (
-            const item of uniqueReleases
+            const item
+            of uniqueReleases
         ) {
 
             console.log(
@@ -270,7 +308,7 @@ async function main() {
 
 
         // ==================================================
-        // STABLE PRIORITY
+        // 3. STABLE HAS PRIORITY
         // ==================================================
 
         const stable =
@@ -287,21 +325,21 @@ async function main() {
             );
 
 
-        let selected;
+        let selectedRelease;
 
 
         if (
             stable.length > 0
         ) {
 
-            selected =
+            selectedRelease =
                 stable[0];
 
         } else if (
             beta.length > 0
         ) {
 
-            selected =
+            selectedRelease =
                 beta[0];
 
         } else {
@@ -319,20 +357,20 @@ async function main() {
         );
 
         console.log(
-            selected.type
+            selectedRelease.type
         );
 
         console.log(
-            selected.href
+            selectedRelease.href
         );
 
 
         // ==================================================
-        // 2. OPEN RELEASE PAGE
+        // 4. OPEN RELEASE
         // ==================================================
 
         await page.goto(
-            selected.href,
+            selectedRelease.href,
             {
                 waitUntil:
                     "domcontentloaded",
@@ -347,26 +385,32 @@ async function main() {
 
 
         // ==================================================
-        // 3. FIND ANDROID APK DOWNLOAD PAGE
+        // 5. GET RELEASE LINKS
         // ==================================================
 
         const releaseLinks =
             await getLinks(page);
 
 
-        const downloadPages = [];
+        // ==================================================
+        // 6. FIND ONLY NODPI
+        // ==================================================
+
+        const nodpiVariants =
+            [];
 
 
         for (
-            const item of releaseLinks
+            const item
+            of releaseLinks
         ) {
-
-            const href =
-                item.href || "";
-
 
             const text =
                 item.text || "";
+
+
+            const href =
+                item.href || "";
 
 
             const combined =
@@ -374,290 +418,136 @@ async function main() {
                     .toLowerCase();
 
 
+            // ---------------------------------------------
+            // Must be YouTube
+            // ---------------------------------------------
+
             if (
-                !href.includes(
-                    "android-apk-download"
+                !combined.includes(
+                    "/apk/google-inc/youtube/"
                 )
             ) {
                 continue;
             }
 
+
+            // ---------------------------------------------
+            // MUST BE NODPI
+            // ---------------------------------------------
+
+            if (
+                !combined.includes(
+                    "nodpi"
+                )
+            ) {
+                continue;
+            }
+
+
+            // ---------------------------------------------
+            // VERSION
+            // ---------------------------------------------
 
             if (
                 !combined.includes(
                     VERSION.toLowerCase()
                 ) &&
                 !combined.includes(
-                    VERSION.replace(
-                        /\./g,
-                        "-"
-                    ).toLowerCase()
+                    VERSION
+                        .replace(
+                            /\./g,
+                            "-"
+                        )
+                        .toLowerCase()
                 )
             ) {
                 continue;
             }
 
+
+            // ---------------------------------------------
+            // BAD
+            // ---------------------------------------------
 
             if (
-                isBadRelease(
-                    combined
+                isBad(combined)
+            ) {
+                continue;
+            }
+
+
+            // ---------------------------------------------
+            // Must lead to APK/download
+            // ---------------------------------------------
+
+            if (
+                !combined.includes(
+                    "apk"
                 )
             ) {
                 continue;
             }
 
 
-            downloadPages.push(
+            nodpiVariants.push({
+
+                text:
+                    text,
+
+                href:
+                    href
+
+            });
+
+        }
+
+
+        // ==================================================
+        // UNIQUE NODPI
+        // ==================================================
+
+        const uniqueNodpi =
+            [];
+
+        const nodpiSeen =
+            new Set();
+
+
+        for (
+            const item
+            of nodpiVariants
+        ) {
+
+            if (
+                nodpiSeen.has(
+                    item.href
+                )
+            ) {
+                continue;
+            }
+
+
+            nodpiSeen.add(
+                item.href
+            );
+
+
+            uniqueNodpi.push(
                 item
             );
 
         }
 
 
-        if (
-            downloadPages.length === 0
-        ) {
-
-            throw new Error(
-                "Không tìm thấy android-apk-download page."
-            );
-
-        }
-
-
         console.log("");
         console.log(
-            "DOWNLOAD PAGES:"
-        );
-
-
-        for (
-            const item of downloadPages
-        ) {
-
-            console.log(
-                item.href
-            );
-
-        }
-
-
-        const downloadPage =
-            downloadPages[0];
-
-
-        console.log("");
-        console.log(
-            "OPEN DOWNLOAD PAGE:"
-        );
-
-        console.log(
-            downloadPage.href
-        );
-
-
-        // ==================================================
-        // 4. OPEN REAL DOWNLOAD PAGE
-        // ==================================================
-
-        await page.goto(
-            downloadPage.href,
-            {
-                waitUntil:
-                    "domcontentloaded",
-
-                timeout:
-                    120000
-            }
-        );
-
-
-        await sleep(5000);
-
-
-        console.log("");
-        console.log(
-            "DOWNLOAD PAGE:"
-        );
-
-        console.log(
-            await page.title()
-        );
-
-
-        // ==================================================
-        // 5. FIND ALL DOWNLOAD LINKS
-        // ==================================================
-
-        const allDownloadLinks =
-            await getLinks(page);
-
-
-        console.log("");
-        console.log(
-            "ALL DOWNLOAD OPTIONS:"
+            "NODPI VARIANTS:"
         );
 
 
         for (
             const item
-            of allDownloadLinks
-        ) {
-
-            const text =
-                item.text || "";
-
-
-            const combined =
-                `${text} ${item.href}`
-                    .toLowerCase();
-
-
-            if (
-                combined.includes(
-                    "download"
-                )
-            ) {
-
-                console.log(
-                    "--------------------------------"
-                );
-
-                console.log(
-                    "TEXT:",
-                    text
-                );
-
-                console.log(
-                    "URL:",
-                    item.href
-                );
-
-            }
-
-        }
-
-
-        // ==================================================
-        // 6. FIND NORMAL APK ONLY
-        // ==================================================
-
-        const normalApkLinks =
-            allDownloadLinks.filter(
-                item => {
-
-                    const text =
-                        (
-                            item.text ||
-                            ""
-                        ).trim();
-
-
-                    const lowerText =
-                        text.toLowerCase();
-
-
-                    const combined =
-                        `${text} ${item.href}`
-                            .toLowerCase();
-
-
-                    // --------------------------------------
-                    // NEVER DOWNLOAD BUNDLE
-                    // --------------------------------------
-
-                    if (
-                        lowerText.includes(
-                            "bundle"
-                        )
-                    ) {
-                        return false;
-                    }
-
-
-                    if (
-                        lowerText.includes(
-                            "splits"
-                        )
-                    ) {
-                        return false;
-                    }
-
-
-                    if (
-                        lowerText.includes(
-                            "base apk"
-                        )
-                    ) {
-                        return false;
-                    }
-
-
-                    if (
-                        combined.includes(
-                            "bundle"
-                        )
-                    ) {
-                        return false;
-                    }
-
-
-                    // --------------------------------------
-                    // MUST BE APK
-                    // --------------------------------------
-
-                    if (
-                        !lowerText.includes(
-                            "download"
-                        )
-                    ) {
-                        return false;
-                    }
-
-
-                    // --------------------------------------
-                    // EXACT NORMAL APK
-                    // --------------------------------------
-
-                    if (
-                        lowerText ===
-                        "download apk"
-                    ) {
-                        return true;
-                    }
-
-
-                    // --------------------------------------
-                    // OTHER NORMAL APK TEXT
-                    // --------------------------------------
-
-                    if (
-                        lowerText.includes(
-                            "download apk"
-                        ) &&
-                        !lowerText.includes(
-                            "bundle"
-                        )
-                    ) {
-                        return true;
-                    }
-
-
-                    return false;
-
-                }
-            );
-
-
-        console.log("");
-        console.log(
-            "NORMAL APK LINKS:"
-        );
-
-
-        for (
-            const item
-            of normalApkLinks
+            of uniqueNodpi
         ) {
 
             console.log(
@@ -674,7 +564,359 @@ async function main() {
 
 
         if (
-            normalApkLinks.length === 0
+            uniqueNodpi.length === 0
+        ) {
+
+            throw new Error(
+                `Không tìm thấy variant nodpi cho ${VERSION}`
+            );
+
+        }
+
+
+        // ==================================================
+        // 7. FIND android-apk-download
+        // ==================================================
+
+        let downloadPage =
+            null;
+
+
+        for (
+            const variant
+            of uniqueNodpi
+        ) {
+
+            console.log("");
+            console.log(
+                "CHECK NODPI:",
+                variant.href
+            );
+
+
+            await page.goto(
+                variant.href,
+                {
+                    waitUntil:
+                        "domcontentloaded",
+
+                    timeout:
+                        120000
+                }
+            );
+
+
+            await sleep(2500);
+
+
+            const variantLinks =
+                await getLinks(page);
+
+
+            for (
+                const item
+                of variantLinks
+            ) {
+
+                const href =
+                    item.href || "";
+
+
+                const combined =
+                    `${item.text} ${href}`
+                        .toLowerCase();
+
+
+                if (
+                    !href.includes(
+                        "android-apk-download"
+                    )
+                ) {
+                    continue;
+                }
+
+
+                if (
+                    combined.includes(
+                        "bundle"
+                    ) ||
+                    combined.includes(
+                        "secondary"
+                    ) ||
+                    combined.includes(
+                        "alpha"
+                    )
+                ) {
+                    continue;
+                }
+
+
+                downloadPage =
+                    href;
+
+
+                break;
+
+            }
+
+
+            if (
+                downloadPage
+            ) {
+
+                break;
+
+            }
+
+        }
+
+
+        if (
+            !downloadPage
+        ) {
+
+            throw new Error(
+                `Không tìm thấy android-apk-download ` +
+                `cho nodpi ${VERSION}`
+            );
+
+        }
+
+
+        console.log("");
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "NODPI DOWNLOAD PAGE:"
+        );
+
+        console.log(
+            downloadPage
+        );
+
+        console.log(
+            "======================================"
+        );
+
+
+        // ==================================================
+        // 8. OPEN DOWNLOAD PAGE
+        // ==================================================
+
+        await page.goto(
+            downloadPage,
+            {
+                waitUntil:
+                    "domcontentloaded",
+
+                timeout:
+                    120000
+            }
+        );
+
+
+        await sleep(6000);
+
+
+        console.log("");
+        console.log(
+            "DOWNLOAD PAGE TITLE:"
+        );
+
+        console.log(
+            await page.title()
+        );
+
+
+        // ==================================================
+        // 9. FIND ALL DOWNLOAD ELEMENTS
+        // ==================================================
+
+        const elements =
+            await page.locator(
+                "a,button,input"
+            ).evaluateAll(
+                elements =>
+                    elements.map(
+                        element => ({
+
+                            tag:
+                                element.tagName,
+
+                            text:
+                                (
+                                    element.innerText ||
+                                    element.value ||
+                                    ""
+                                ).trim(),
+
+                            href:
+                                element.href ||
+                                element.getAttribute(
+                                    "href"
+                                ) ||
+                                "",
+
+                            id:
+                                element.id ||
+                                "",
+
+                            className:
+                                typeof element.className ===
+                                "string"
+                                    ? element.className
+                                    : ""
+
+                        })
+                    )
+            );
+
+
+        console.log("");
+        console.log(
+            "DOWNLOAD ELEMENTS:"
+        );
+
+
+        for (
+            const item
+            of elements
+        ) {
+
+            const combined =
+                `${item.text} ${item.href} ${item.id} ${item.className}`
+                    .toLowerCase();
+
+
+            if (
+                combined.includes(
+                    "download"
+                )
+            ) {
+
+                console.log(
+                    JSON.stringify(
+                        item,
+                        null,
+                        2
+                    )
+                );
+
+            }
+
+        }
+
+
+        // ==================================================
+        // 10. FIND NORMAL DOWNLOAD APK
+        // ==================================================
+
+        const candidates =
+            elements.filter(
+                item => {
+
+                    const text =
+                        item.text
+                            .trim()
+                            .toLowerCase();
+
+
+                    const combined =
+                        `${item.text} ${item.href} ${item.id} ${item.className}`
+                            .toLowerCase();
+
+
+                    // NEVER BUNDLE
+                    if (
+                        combined.includes(
+                            "bundle"
+                        )
+                    ) {
+                        return false;
+                    }
+
+
+                    if (
+                        combined.includes(
+                            "splits"
+                        )
+                    ) {
+                        return false;
+                    }
+
+
+                    if (
+                        combined.includes(
+                            "base apk"
+                        )
+                    ) {
+                        return false;
+                    }
+
+
+                    // EXACT
+                    if (
+                        text ===
+                        "download apk"
+                    ) {
+                        return true;
+                    }
+
+
+                    // Download APK with extra text
+                    if (
+                        text.includes(
+                            "download apk"
+                        )
+                    ) {
+                        return true;
+                    }
+
+
+                    // Direct /download/?key
+                    if (
+                        item.href.includes(
+                            "/download/?key="
+                        )
+                    ) {
+                        return true;
+                    }
+
+
+                    return false;
+
+                }
+            );
+
+
+        console.log("");
+        console.log(
+            "NORMAL APK CANDIDATES:"
+        );
+
+
+        for (
+            const item
+            of candidates
+        ) {
+
+            console.log(
+                "TEXT:",
+                item.text
+            );
+
+            console.log(
+                "URL:",
+                item.href
+            );
+
+        }
+
+
+        if (
+            candidates.length === 0
         ) {
 
             throw new Error(
@@ -685,11 +927,42 @@ async function main() {
 
 
         // ==================================================
-        // 7. SELECT DOWNLOAD APK
+        // 11. SELECT
         // ==================================================
 
-        const target =
-            normalApkLinks[0];
+        let selectedDownload =
+            candidates.find(
+                item =>
+                    item.text
+                        .trim()
+                        .toLowerCase() ===
+                    "download apk"
+            );
+
+
+        if (
+            !selectedDownload
+        ) {
+
+            selectedDownload =
+                candidates.find(
+                    item =>
+                        item.href.includes(
+                            "/download/?key="
+                        )
+                );
+
+        }
+
+
+        if (
+            !selectedDownload
+        ) {
+
+            selectedDownload =
+                candidates[0];
+
+        }
 
 
         console.log("");
@@ -702,11 +975,11 @@ async function main() {
         );
 
         console.log(
-            target.text
+            selectedDownload.text
         );
 
         console.log(
-            target.href
+            selectedDownload.href
         );
 
         console.log(
@@ -715,47 +988,71 @@ async function main() {
 
 
         // ==================================================
-        // 8. FIND ELEMENT BY TEXT
+        // 12. FIND REAL DOM ELEMENT
         // ==================================================
 
-        const downloadLinks =
-            page.locator("a");
+        let targetElement =
+            null;
 
 
-        let targetElement = null;
+        const anchors =
+            page.locator(
+                "a"
+            );
 
 
-        const count =
-            await downloadLinks.count();
+        const anchorCount =
+            await anchors.count();
 
 
         for (
             let i = 0;
-            i < count;
+            i < anchorCount;
             i++
         ) {
 
-            const element =
-                downloadLinks.nth(i);
+            const anchor =
+                anchors.nth(i);
 
 
             const text =
                 (
-                    await element.innerText()
-                ).trim();
+                    await anchor.innerText()
+                )
+                    .trim()
+                    .toLowerCase();
 
 
-            const lower =
-                text.toLowerCase();
+            const href =
+                await anchor.getAttribute(
+                    "href"
+                );
 
 
+            // EXACT DOWNLOAD APK
             if (
-                lower ===
+                text ===
                 "download apk"
             ) {
 
                 targetElement =
-                    element;
+                    anchor;
+
+                break;
+
+            }
+
+
+            // Direct download key
+            if (
+                href &&
+                href.includes(
+                    "/download/?key="
+                )
+            ) {
+
+                targetElement =
+                    anchor;
 
                 break;
 
@@ -776,7 +1073,7 @@ async function main() {
 
 
         // ==================================================
-        // 9. CLICK
+        // 13. CLICK
         // ==================================================
 
         console.log("");
@@ -805,7 +1102,7 @@ async function main() {
 
 
         // ==================================================
-        // 10. SAVE
+        // 14. SAVE
         // ==================================================
 
         const filename =
@@ -820,6 +1117,10 @@ async function main() {
 
         console.log("");
         console.log(
+            "======================================"
+        );
+
+        console.log(
             "APK SAVED:"
         );
 
@@ -827,9 +1128,13 @@ async function main() {
             filename
         );
 
+        console.log(
+            "======================================"
+        );
+
 
         // ==================================================
-        // 11. VERIFY
+        // 15. VERIFY
         // ==================================================
 
         if (
@@ -875,7 +1180,7 @@ async function main() {
 
 
         // ==================================================
-        // 12. GITHUB OUTPUT
+        // 16. GITHUB OUTPUT
         // ==================================================
 
         if (
@@ -884,19 +1189,22 @@ async function main() {
 
             fs.appendFileSync(
                 process.env.GITHUB_OUTPUT,
-                `release_type=${selected.type}\n`
+
+                `release_type=${selectedRelease.type}\n`
             );
 
 
             fs.appendFileSync(
                 process.env.GITHUB_OUTPUT,
-                `release_url=${selected.href}\n`
+
+                `release_url=${selectedRelease.href}\n`
             );
 
 
             fs.appendFileSync(
                 process.env.GITHUB_OUTPUT,
-                `download_page=${downloadPage.href}\n`
+
+                `download_page=${downloadPage}\n`
             );
 
         }
