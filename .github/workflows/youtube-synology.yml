@@ -1,103 +1,786 @@
-name: Download YouTube APKMirror → Synology
+name: YouTube APKMirror to Synology
 
 on:
   workflow_dispatch:
+
   schedule:
+    # Mỗi ngày lúc 02:30 UTC = 09:30 giờ Việt Nam
     - cron: "30 2 * * *"
 
 permissions:
   contents: write
 
 jobs:
-  download-upload:
+  youtube:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+
+      # ==========================================
+      # CHECKOUT
+      # ==========================================
+
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+
+      # ==========================================
+      # INSTALL
+      # ==========================================
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 python3-pip openssh-client
-          python3 -m pip install --upgrade pip
-          pip install requests beautifulsoup4 lxml
+          sudo apt-get install -y \
+            python3 \
+            python3-pip \
+            openssh-client
 
-      - name: Find latest YouTube APK
-        id: find
+          python3 -m pip install \
+            --upgrade \
+            --break-system-packages \
+            requests \
+            beautifulsoup4 \
+            lxml
+
+
+      # ==========================================
+      # FIND LATEST YOUTUBE
+      # ==========================================
+
+      - name: Find latest YouTube version
+        id: version
         run: |
-          python3 scripts/find_youtube.py
 
-      - name: Download APK from APKMirror
+          python3 <<'PY'
+
+          import requests
+          import re
+          import os
+
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
+
+
+          URL = "https://www.apkmirror.com/apk/google-inc/youtube/"
+
+
+          HEADERS = {
+              "User-Agent":
+                  "Mozilla/5.0 (X11; Linux x86_64) "
+                  "AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) "
+                  "Chrome/151.0.0.0 Safari/537.36",
+
+              "Accept":
+                  "text/html,application/xhtml+xml,"
+                  "application/xml;q=0.9,*/*;q=0.8",
+
+              "Accept-Language":
+                  "en-US,en;q=0.9"
+          }
+
+
+          session = requests.Session()
+          session.headers.update(HEADERS)
+
+
+          print("Opening APKMirror...")
+          print(URL)
+
+
+          response = session.get(
+              URL,
+              timeout=60
+          )
+
+
+          if response.status_code != 200:
+
+              raise SystemExit(
+                  f"APKMirror HTTP {response.status_code}"
+              )
+
+
+          soup = BeautifulSoup(
+              response.text,
+              "lxml"
+          )
+
+
+          releases = []
+
+
+          for a in soup.select("a[href]"):
+
+              href = a.get("href", "")
+
+              text = " ".join(
+                  a.stripped_strings
+              )
+
+
+              low = (
+                  text + " " + href
+              ).lower()
+
+
+              if "youtube" not in low:
+                  continue
+
+
+              if "release" not in low:
+                  continue
+
+
+              # Không lấy beta / alpha / rc
+              if any(
+                  x in low
+                  for x in [
+                      " beta",
+                      " alpha",
+                      " rc"
+                  ]
+              ):
+                  continue
+
+
+              match = re.search(
+                  r"youtube[-\s]+"
+                  r"(\d+)[.-]"
+                  r"(\d+)[.-]"
+                  r"(\d+)",
+                  low
+              )
+
+
+              if not match:
+                  continue
+
+
+              version = ".".join(
+                  match.groups()
+              )
+
+
+              release_url = urljoin(
+                  URL,
+                  href
+              )
+
+
+              releases.append(
+                  (
+                      tuple(
+                          map(
+                              int,
+                              version.split(".")
+                          )
+                      ),
+                      version,
+                      release_url
+                  )
+              )
+
+
+          if not releases:
+
+              raise SystemExit(
+                  "Không tìm thấy YouTube release."
+              )
+
+
+          releases.sort(
+              reverse=True
+          )
+
+
+          _, version, release_url = releases[0]
+
+
+          print("")
+          print("==============================")
+          print("LATEST YOUTUBE")
+          print("==============================")
+          print("Version:", version)
+          print("URL:", release_url)
+          print("==============================")
+
+
+          with open(
+              "version.txt",
+              "w"
+          ) as f:
+
+              f.write(version)
+
+
+          with open(
+              "release_url.txt",
+              "w"
+          ) as f:
+
+              f.write(release_url)
+
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+
+              f.write(
+                  f"version={version}\n"
+              )
+
+              f.write(
+                  f"release_url={release_url}\n"
+              )
+
+          PY
+
+
+      # ==========================================
+      # DOWNLOAD APK
+      # ==========================================
+
+      - name: Download YouTube APK
         env:
-          RELEASE_URL: ${{ steps.find.outputs.release_url }}
-        run: |
-          python3 scripts/download_youtube.py
+          RELEASE_URL: ${{ steps.version.outputs.release_url }}
 
-      - name: Calculate SHA256
         run: |
-          sha256sum "YouTube-$(cat version.txt).apk" | tee sha256.txt
+
+          python3 <<'PY'
+
+          import requests
+          import os
+
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
+
+
+          release_url = os.environ[
+              "RELEASE_URL"
+          ]
+
+
+          HEADERS = {
+
+              "User-Agent":
+                  "Mozilla/5.0 (X11; Linux x86_64) "
+                  "AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) "
+                  "Chrome/151.0.0.0 Safari/537.36",
+
+              "Accept":
+                  "text/html,application/xhtml+xml,"
+                  "application/xml;q=0.9,*/*;q=0.8",
+
+              "Accept-Language":
+                  "en-US,en;q=0.9",
+
+              "Referer":
+                  "https://www.apkmirror.com/"
+          }
+
+
+          session = requests.Session()
+
+          session.headers.update(
+              HEADERS
+          )
+
+
+          print(
+              "Release page:"
+          )
+
+          print(
+              release_url
+          )
+
+
+          response = session.get(
+              release_url,
+              timeout=60
+          )
+
+
+          if response.status_code != 200:
+
+              raise SystemExit(
+                  f"Release page HTTP "
+                  f"{response.status_code}"
+              )
+
+
+          soup = BeautifulSoup(
+              response.text,
+              "lxml"
+          )
+
+
+          download_page = None
+
+
+          # ------------------------------------------
+          # Find APKMirror download page
+          # ------------------------------------------
+
+          for a in soup.select(
+              "a[href]"
+          ):
+
+              href = a.get(
+                  "href",
+                  ""
+              )
+
+              text = " ".join(
+                  a.stripped_strings
+              ).lower()
+
+
+              if (
+                  "download" in text
+                  and
+                  "apk" in text
+                  and
+                  "/apk/" in href
+              ):
+
+                  download_page = urljoin(
+                      release_url,
+                      href
+                  )
+
+                  break
+
+
+          if not download_page:
+
+              for a in soup.select(
+                  "a[href]"
+              ):
+
+                  href = a.get(
+                      "href",
+                      ""
+                  )
+
+
+                  if (
+                      "android-apk-download"
+                      in href
+                  ):
+
+                      download_page = urljoin(
+                          release_url,
+                          href
+                      )
+
+                      break
+
+
+          if not download_page:
+
+              raise SystemExit(
+                  "Không tìm thấy APKMirror "
+                  "download page."
+              )
+
+
+          print(
+              "Download page:"
+          )
+
+          print(
+              download_page
+          )
+
+
+          # ------------------------------------------
+          # Open download page
+          # ------------------------------------------
+
+          response2 = session.get(
+              download_page,
+              timeout=60
+          )
+
+
+          if response2.status_code != 200:
+
+              raise SystemExit(
+                  f"Download page HTTP "
+                  f"{response2.status_code}"
+              )
+
+
+          soup2 = BeautifulSoup(
+              response2.text,
+              "lxml"
+          )
+
+
+          apk_url = None
+
+
+          # ------------------------------------------
+          # Find direct APK
+          # ------------------------------------------
+
+          for a in soup2.select(
+              "a[href]"
+          ):
+
+              href = a.get(
+                  "href",
+                  ""
+              )
+
+              text = " ".join(
+                  a.stripped_strings
+              ).lower()
+
+
+              if not href.startswith(
+                  "http"
+              ):
+                  continue
+
+
+              if (
+                  "download" in text
+                  and
+                  (
+                      "apk" in text
+                      or
+                      "mirror" in text
+                  )
+              ):
+
+                  apk_url = href
+
+                  break
+
+
+          # fallback
+
+          if not apk_url:
+
+              for a in soup2.select(
+                  "a[href]"
+              ):
+
+                  href = a.get(
+                      "href",
+                      ""
+                  )
+
+
+                  if ".apk" in href.lower():
+
+                      apk_url = href
+
+                      break
+
+
+          if not apk_url:
+
+              raise SystemExit(
+                  "Không tìm thấy direct APK URL."
+              )
+
+
+          version = open(
+              "version.txt"
+          ).read().strip()
+
+
+          filename = (
+              f"YouTube-{version}.apk"
+          )
+
+
+          print("")
+          print(
+              "APK URL:"
+          )
+
+          print(
+              apk_url
+          )
+
+
+          print("")
+          print(
+              "Downloading:"
+          )
+
+          print(
+              filename
+          )
+
+
+          apk = session.get(
+              apk_url,
+              stream=True,
+              timeout=180
+          )
+
+
+          if apk.status_code != 200:
+
+              raise SystemExit(
+                  f"APK download failed: "
+                  f"HTTP {apk.status_code}"
+              )
+
+
+          content_type = apk.headers.get(
+              "content-type",
+              ""
+          ).lower()
+
+
+          if "text/html" in content_type:
+
+              raise SystemExit(
+                  "APKMirror trả về HTML "
+                  "thay vì APK."
+              )
+
+
+          total = 0
+
+
+          with open(
+              filename,
+              "wb"
+          ) as f:
+
+              for chunk in apk.iter_content(
+                  chunk_size=1024 * 1024
+              ):
+
+                  if chunk:
+
+                      f.write(
+                          chunk
+                      )
+
+                      total += len(
+                          chunk
+                      )
+
+
+          print(
+              f"Downloaded "
+              f"{total / 1024 / 1024:.2f} MB"
+          )
+
+
+          if total < 10 * 1024 * 1024:
+
+              raise SystemExit(
+                  "APK quá nhỏ. "
+                  "Download thất bại."
+              )
+
+          PY
+
+
+      # ==========================================
+      # SHA256
+      # ==========================================
+
+      - name: Generate SHA256
+        run: |
+
+          VERSION="$(cat version.txt)"
+
+          sha256sum \
+            "YouTube-${VERSION}.apk" \
+            | tee sha256.txt
+
+
+      # ==========================================
+      # SSH SETUP
+      # ==========================================
 
       - name: Setup SSH
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SYNOLOGY_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/synology_key
-          chmod 600 ~/.ssh/synology_key
-          ssh-keyscan -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            "${{ secrets.SYNOLOGY_HOST }}" >> ~/.ssh/known_hosts
+          SSH_KEY: ${{ secrets.SYNOLOGY_SSH_KEY }}
 
-      - name: Create directory on Synology
         run: |
-          ssh -i ~/.ssh/synology_key \
+
+          mkdir -p ~/.ssh
+
+          printf '%s\n' \
+            "$SSH_KEY" \
+            > ~/.ssh/synology_key
+
+          chmod 600 \
+            ~/.ssh/synology_key
+
+
+          ssh-keyscan \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_HOST }}" \
+            >> ~/.ssh/known_hosts
+
+
+      # ==========================================
+      # TEST SSH
+      # ==========================================
+
+      - name: Test Synology SSH
+        run: |
+
+          ssh \
+            -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "echo SSH connection OK"
+
+
+      # ==========================================
+      # CREATE DIRECTORY
+      # ==========================================
+
+      - name: Create Synology directory
+        run: |
+
+          ssh \
+            -i ~/.ssh/synology_key \
             -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
             "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
             "mkdir -p '${{ secrets.SYNOLOGY_PATH }}'"
 
-      - name: Check existing version
+
+      # ==========================================
+      # CHECK VERSION
+      # ==========================================
+
+      - name: Check existing APK
         id: check
+
         run: |
+
           VERSION="$(cat version.txt)"
-          if ssh -i ~/.ssh/synology_key \
+
+
+          if ssh \
+            -i ~/.ssh/synology_key \
             -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
             "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
             "test -f '${{ secrets.SYNOLOGY_PATH }}/YouTube-${VERSION}.apk'"
           then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "YouTube ${VERSION} already exists on Synology."
+
+            echo "exists=true" \
+              >> "$GITHUB_OUTPUT"
+
+            echo ""
+            echo "================================"
+            echo "APK ALREADY EXISTS"
+            echo "Version: $VERSION"
+            echo "================================"
+
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+
+            echo "exists=false" \
+              >> "$GITHUB_OUTPUT"
+
           fi
+
+
+      # ==========================================
+      # UPLOAD APK
+      # ==========================================
 
       - name: Upload APK to Synology
         if: steps.check.outputs.exists != 'true'
+
         run: |
+
           VERSION="$(cat version.txt)"
-          scp -i ~/.ssh/synology_key \
+
+
+          echo ""
+          echo "Uploading:"
+          echo "YouTube-${VERSION}.apk"
+
+
+          scp \
+            -O \
+            -i ~/.ssh/synology_key \
             -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
             "YouTube-${VERSION}.apk" \
             "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
 
-      - name: Upload metadata
+
+      # ==========================================
+      # UPLOAD VERSION
+      # ==========================================
+
+      - name: Upload version.txt
         if: steps.check.outputs.exists != 'true'
+
         run: |
-          scp -i ~/.ssh/synology_key \
+
+          scp \
+            -O \
+            -i ~/.ssh/synology_key \
             -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
-            version.txt sha256.txt \
+            version.txt \
             "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
 
-      - name: Verify file on Synology
+
+      # ==========================================
+      # UPLOAD SHA256
+      # ==========================================
+
+      - name: Upload SHA256
         if: steps.check.outputs.exists != 'true'
+
         run: |
+
+          scp \
+            -O \
+            -i ~/.ssh/synology_key \
+            -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            sha256.txt \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
+
+
+      # ==========================================
+      # VERIFY
+      # ==========================================
+
+      - name: Verify Synology
+        run: |
+
           VERSION="$(cat version.txt)"
-          ssh -i ~/.ssh/synology_key \
+
+
+          ssh \
+            -i ~/.ssh/synology_key \
             -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
             "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
             "ls -lh '${{ secrets.SYNOLOGY_PATH }}/YouTube-${VERSION}.apk'"
 
+
+      # ==========================================
+      # CLEANUP
+      # ==========================================
+
       - name: Cleanup
         if: always()
+
         run: |
-          rm -f ~/.ssh/synology_key
-          rm -f *.apk
+
+          rm -f \
+            ~/.ssh/synology_key
+
+          rm -f \
+            *.apk
