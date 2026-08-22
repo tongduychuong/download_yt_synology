@@ -7,8 +7,7 @@ if (!VERSION) {
     throw new Error("VERSION is missing");
 }
 
-const BASE_URL =
-    "https://www.apkmirror.com";
+const BASE_URL = "https://www.apkmirror.com";
 
 const SEARCH_URL =
     `${BASE_URL}/?post_type=app_release&searchtype=apk&s=youtube+${VERSION}`;
@@ -25,10 +24,9 @@ function sleep(ms) {
 }
 
 
-function isBadRelease(text) {
+function isBad(text) {
 
-    const s =
-        text.toLowerCase();
+    const s = text.toLowerCase();
 
     return (
         s.includes("secondary") ||
@@ -41,8 +39,7 @@ function isBadRelease(text) {
 
 function isBeta(text) {
 
-    const s =
-        text.toLowerCase();
+    const s = text.toLowerCase();
 
     return (
         s.includes(" beta") ||
@@ -55,136 +52,90 @@ function isBeta(text) {
 
 async function getLinks(page) {
 
-    return await page
-        .locator("a[href]")
-        .evaluateAll(
-            elements =>
-                elements.map(
-                    element => ({
-                        text:
-                            (
-                                element.innerText ||
-                                ""
-                            ).trim(),
+    return await page.locator("a[href]").evaluateAll(
+        elements =>
+            elements.map(element => ({
+                text: (
+                    element.innerText || ""
+                ).trim(),
 
-                        href:
-                            element.href
-                    })
-                )
-        );
+                href: element.href
+            }))
+    );
 
 }
 
 
 async function main() {
 
-    // ==================================================
-    // BROWSER
-    // ==================================================
+    const browser = await chromium.launch({
+        headless: true,
 
-    const browser =
-        await chromium.launch({
-
-            headless: true,
-
-            args: [
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled"
-            ]
-
-        });
+        args: [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled"
+        ]
+    });
 
 
-    const context =
-        await browser.newContext({
+    const context = await browser.newContext({
+        userAgent: USER_AGENT,
 
-            userAgent:
-                USER_AGENT,
+        locale: "en-US",
 
-            locale:
-                "en-US",
+        viewport: {
+            width: 1366,
+            height: 900
+        },
 
-            viewport: {
-                width: 1366,
-                height: 900
-            },
-
-            extraHTTPHeaders: {
-
-                "Accept-Language":
-                    "en-US,en;q=0.9"
-
-            }
-
-        });
+        extraHTTPHeaders: {
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+    });
 
 
-    const page =
-        await context.newPage();
+    const page = await context.newPage();
 
 
     try {
 
-        // ==================================================
-        // 1. SEARCH
-        // ==================================================
+        // =================================================
+        // SEARCH
+        // =================================================
 
         console.log("");
-        console.log(
-            "======================================"
-        );
-
-        console.log(
-            "VERSION:",
-            VERSION
-        );
-
-        console.log(
-            "SEARCH:",
-            SEARCH_URL
-        );
-
-        console.log(
-            "======================================"
-        );
+        console.log("======================================");
+        console.log("YouTube VERSION:", VERSION);
+        console.log("SEARCH:", SEARCH_URL);
+        console.log("======================================");
 
 
         await page.goto(
             SEARCH_URL,
             {
-                waitUntil:
-                    "domcontentloaded",
-
-                timeout:
-                    120000
+                waitUntil: "domcontentloaded",
+                timeout: 120000
             }
         );
 
 
-        await sleep(3000);
+        await sleep(4000);
 
 
-        // ==================================================
-        // 2. FIND RELEASE
-        // ==================================================
+        // =================================================
+        // FIND RELEASE
+        // =================================================
 
-        const searchLinks =
-            await getLinks(page);
+        const links = await getLinks(page);
 
-
-        const releases =
-            [];
+        const releases = [];
 
 
-        for (
-            const item
-            of searchLinks
-        ) {
+        for (const item of links) {
 
             const combined =
-                `${item.text} ${item.href}`
-                    .toLowerCase();
+                `${item.text} ${item.href}`.toLowerCase();
 
 
             if (
@@ -197,9 +148,7 @@ async function main() {
 
 
             if (
-                !combined.includes(
-                    "release"
-                )
+                !combined.includes("release")
             ) {
                 continue;
             }
@@ -211,10 +160,7 @@ async function main() {
                 ) &&
                 !combined.includes(
                     VERSION
-                        .replace(
-                            /\./g,
-                            "-"
-                        )
+                        .replace(/\./g, "-")
                         .toLowerCase()
                 )
             ) {
@@ -222,118 +168,66 @@ async function main() {
             }
 
 
-            if (
-                isBadRelease(combined)
-            ) {
+            if (isBad(combined)) {
                 continue;
             }
 
 
             releases.push({
+                type: isBeta(combined)
+                    ? "beta"
+                    : "stable",
 
-                type:
-                    isBeta(combined)
-                        ? "beta"
-                        : "stable",
-
-                href:
-                    item.href
-
+                href: item.href
             });
 
         }
 
 
-        // ==================================================
-        // UNIQUE RELEASES
-        // ==================================================
+        const unique = [];
 
-        const uniqueReleases =
-            [];
-
-        const seenReleases =
-            new Set();
+        const seen = new Set();
 
 
-        for (
-            const item
-            of releases
-        ) {
+        for (const item of releases) {
 
-            if (
-                seenReleases.has(
-                    item.href
-                )
-            ) {
+            if (seen.has(item.href)) {
                 continue;
             }
 
+            seen.add(item.href);
 
-            seenReleases.add(
-                item.href
-            );
-
-
-            uniqueReleases.push(
-                item
-            );
+            unique.push(item);
 
         }
 
 
-        console.log("");
-        console.log(
-            "RELEASE CANDIDATES:"
-        );
-
-
-        for (
-            const item
-            of uniqueReleases
-        ) {
-
-            console.log(
-                `[${item.type}]`,
-                item.href
-            );
-
-        }
-
-
-        // ==================================================
-        // 3. STABLE > BETA
-        // ==================================================
+        // =================================================
+        // STABLE FIRST
+        // =================================================
 
         const stable =
-            uniqueReleases.filter(
-                item =>
-                    item.type === "stable"
+            unique.filter(
+                x => x.type === "stable"
             );
 
 
         const beta =
-            uniqueReleases.filter(
-                item =>
-                    item.type === "beta"
+            unique.filter(
+                x => x.type === "beta"
             );
 
 
-        let selectedRelease;
+        let release;
 
 
-        if (
-            stable.length > 0
-        ) {
+        if (stable.length > 0) {
 
-            selectedRelease =
-                stable[0];
+            release = stable[0];
 
-        } else if (
-            beta.length > 0
-        ) {
+        } else if (beta.length > 0) {
 
-            selectedRelease =
-                beta[0];
+            release = beta[0];
 
         } else {
 
@@ -345,71 +239,52 @@ async function main() {
 
 
         console.log("");
-        console.log(
-            "SELECTED RELEASE:"
-        );
-
-        console.log(
-            selectedRelease.type
-        );
-
-        console.log(
-            selectedRelease.href
-        );
+        console.log("SELECTED:");
+        console.log(release.type);
+        console.log(release.href);
 
 
-        // ==================================================
-        // 4. OPEN RELEASE
-        // ==================================================
+        // =================================================
+        // OPEN RELEASE
+        // =================================================
 
         await page.goto(
-            selectedRelease.href,
+            release.href,
             {
-                waitUntil:
-                    "domcontentloaded",
-
-                timeout:
-                    120000
+                waitUntil: "domcontentloaded",
+                timeout: 120000
             }
         );
 
 
-        await sleep(4000);
+        await sleep(5000);
 
 
-        // ==================================================
-        // 5. FIND APK DOWNLOAD PAGES
-        // ==================================================
+        // =================================================
+        // FIND APK DOWNLOAD PAGES
+        // =================================================
 
         const releaseLinks =
             await getLinks(page);
 
 
-        const apkPages =
-            [];
+        const apkPages = [];
 
 
-        for (
-            const item
-            of releaseLinks
-        ) {
+        for (const item of releaseLinks) {
 
             const href =
                 item.href || "";
 
-
-            const lowerHref =
+            const lower =
                 href.toLowerCase();
 
-
             const combined =
-                `${item.text} ${href}`
-                    .toLowerCase();
+                `${item.text} ${href}`.toLowerCase();
 
 
-            // YouTube only
             if (
-                !lowerHref.includes(
+                !lower.includes(
                     "/apk/google-inc/youtube/"
                 )
             ) {
@@ -417,9 +292,8 @@ async function main() {
             }
 
 
-            // Real APK download page
             if (
-                !lowerHref.includes(
+                !lower.includes(
                     "android-apk-download"
                 )
             ) {
@@ -427,17 +301,13 @@ async function main() {
             }
 
 
-            // Version
             if (
-                !lowerHref.includes(
+                !lower.includes(
                     VERSION.toLowerCase()
                 ) &&
-                !lowerHref.includes(
+                !lower.includes(
                     VERSION
-                        .replace(
-                            /\./g,
-                            "-"
-                        )
+                        .replace(/\./g, "-")
                         .toLowerCase()
                 )
             ) {
@@ -445,118 +315,54 @@ async function main() {
             }
 
 
-            // No secondary
-            if (
-                combined.includes(
-                    "secondary"
-                )
-            ) {
+            if (isBad(combined)) {
                 continue;
             }
 
 
-            // No alpha
+            // KHÔNG CHỌN BUNDLE
             if (
-                combined.includes(
-                    "alpha"
-                )
-            ) {
-                continue;
-            }
-
-
-            // No RC
-            if (
-                combined.includes(
-                    "release-candidate"
-                ) ||
-                /\brc\b/.test(combined)
-            ) {
-                continue;
-            }
-
-
-            // No bundle
-            if (
-                lowerHref.includes(
-                    "bundle"
-                )
+                lower.includes("bundle")
             ) {
                 continue;
             }
 
 
             apkPages.push({
-
-                text:
-                    item.text,
-
-                href:
-                    item.href
-
+                text: item.text,
+                href: item.href
             });
 
         }
 
 
-        // ==================================================
-        // UNIQUE APK PAGES
-        // ==================================================
+        const uniquePages = [];
 
-        const uniqueApkPages =
-            [];
-
-        const pageSeen =
-            new Set();
+        const pageSeen = new Set();
 
 
-        for (
-            const item
-            of apkPages
-        ) {
+        for (const item of apkPages) {
 
-            if (
-                pageSeen.has(
-                    item.href
-                )
-            ) {
+            if (pageSeen.has(item.href)) {
                 continue;
             }
 
+            pageSeen.add(item.href);
 
-            pageSeen.add(
-                item.href
-            );
-
-
-            uniqueApkPages.push(
-                item
-            );
+            uniquePages.push(item);
 
         }
 
 
         console.log("");
-        console.log(
-            "NON-BUNDLE APK PAGES:"
-        );
+        console.log("NON-BUNDLE APK PAGES:");
 
-
-        for (
-            const item
-            of uniqueApkPages
-        ) {
-
-            console.log(
-                item.href
-            );
-
+        for (const item of uniquePages) {
+            console.log(item.href);
         }
 
 
-        if (
-            uniqueApkPages.length === 0
-        ) {
+        if (uniquePages.length === 0) {
 
             throw new Error(
                 "Không tìm thấy APK non-bundle."
@@ -565,61 +371,26 @@ async function main() {
         }
 
 
-        // ==================================================
-        // 6. SELECT NODPI APK
-        // ==================================================
+        // =================================================
+        // ƯU TIÊN LINK -3-
+        // =================================================
 
         const versionDash =
-            VERSION.replace(
-                /\./g,
-                "-"
-            );
+            VERSION.replace(/\./g, "-");
 
 
-        let selectedApkPage =
-            uniqueApkPages.find(
-                item => {
-
-                    const href =
-                        item.href.toLowerCase();
-
-
-                    return (
-                        href.includes(
-                            `-${versionDash}-3-android-apk-download`
-                        )
-                    );
-
-                }
+        let selectedPage =
+            uniquePages.find(
+                item =>
+                    item.href.includes(
+                        `-${versionDash}-3-android-apk-download`
+                    )
             );
 
 
         // Fallback
-        if (
-            !selectedApkPage
-        ) {
-
-            selectedApkPage =
-                uniqueApkPages.find(
-                    item =>
-                        !item.href
-                            .toLowerCase()
-                            .includes(
-                                "bundle"
-                            )
-                );
-
-        }
-
-
-        if (
-            !selectedApkPage
-        ) {
-
-            throw new Error(
-                `Không tìm thấy nodpi APK page cho ${VERSION}`
-            );
-
+        if (!selectedPage) {
+            selectedPage = uniquePages[0];
         }
 
 
@@ -633,7 +404,7 @@ async function main() {
         );
 
         console.log(
-            selectedApkPage.href
+            selectedPage.href
         );
 
         console.log(
@@ -641,44 +412,37 @@ async function main() {
         );
 
 
-        // ==================================================
-        // 7. OPEN DOWNLOAD PAGE
-        // ==================================================
+        // =================================================
+        // OPEN NODPI PAGE
+        // =================================================
 
         await page.goto(
-            selectedApkPage.href,
+            selectedPage.href,
             {
-                waitUntil:
-                    "domcontentloaded",
-
-                timeout:
-                    120000
+                waitUntil: "domcontentloaded",
+                timeout: 120000
             }
         );
 
 
-        // ==================================================
-        // 8. WAIT 20 SECONDS
-        // ==================================================
+        // =================================================
+        // WAIT 20 SECONDS
+        // =================================================
 
         console.log("");
         console.log(
-            "APKMirror anti-adblock detected."
-        );
-
-        console.log(
-            "Waiting 20 seconds..."
+            "Waiting APKMirror anti-adblock..."
         );
 
 
         for (
-            let seconds = 20;
-            seconds > 0;
-            seconds--
+            let i = 20;
+            i > 0;
+            i--
         ) {
 
             process.stdout.write(
-                `\rWaiting ${seconds}s...`
+                `\rWaiting ${i}s...`
             );
 
             await sleep(1000);
@@ -692,18 +456,16 @@ async function main() {
         );
 
 
-        // ==================================================
-        // 9. WAIT DOWNLOAD APK
-        // ==================================================
+        // =================================================
+        // WAIT DOWNLOAD APK
+        // =================================================
 
-        console.log("");
         console.log(
             "Waiting for DOWNLOAD APK..."
         );
 
 
-        let downloadButton =
-            null;
+        let downloadButton = null;
 
 
         for (
@@ -712,10 +474,7 @@ async function main() {
             attempt++
         ) {
 
-            // ----------------------------------------------
-            // Exact text
-            // ----------------------------------------------
-
+            // Exact
             const exact =
                 page.getByText(
                     "DOWNLOAD APK",
@@ -737,10 +496,7 @@ async function main() {
             }
 
 
-            // ----------------------------------------------
             // Regex
-            // ----------------------------------------------
-
             const regex =
                 page.getByText(
                     /DOWNLOAD\s+APK/i
@@ -751,59 +507,41 @@ async function main() {
                 await regex.count();
 
 
-            if (
-                count > 0
+            for (
+                let i = 0;
+                i < count;
+                i++
             ) {
 
-                for (
-                    let i = 0;
-                    i < count;
-                    i++
+                const element =
+                    regex.nth(i);
+
+
+                const text =
+                    (
+                        await element.innerText()
+                    )
+                    .trim()
+                    .toLowerCase();
+
+
+                if (
+                    text.includes("bundle") ||
+                    text.includes("splits")
                 ) {
-
-                    const element =
-                        regex.nth(i);
-
-
-                    const text =
-                        (
-                            await element.innerText()
-                        )
-                        .trim()
-                        .toLowerCase();
-
-
-                    if (
-                        text.includes(
-                            "bundle"
-                        )
-                    ) {
-                        continue;
-                    }
-
-
-                    if (
-                        text.includes(
-                            "splits"
-                        )
-                    ) {
-                        continue;
-                    }
-
-
-                    downloadButton =
-                        element;
-
-                    break;
-
+                    continue;
                 }
+
+
+                downloadButton =
+                    element;
+
+                break;
 
             }
 
 
-            if (
-                downloadButton
-            ) {
+            if (downloadButton) {
                 break;
             }
 
@@ -813,48 +551,23 @@ async function main() {
         }
 
 
-        if (
-            !downloadButton
-        ) {
-
-            console.log("");
-            console.log(
-                "DOWNLOAD APK NOT FOUND."
-            );
-
+        if (!downloadButton) {
 
             const body =
-                await page
-                    .locator(
-                        "body"
-                    )
-                    .innerText();
+                await page.locator(
+                    "body"
+                ).innerText();
 
 
-            console.log("");
-            console.log(
-                "PAGE TEXT:"
-            );
-
-
-            console.log(
-                body.substring(
-                    0,
-                    5000
-                )
-            );
+            console.log(body.substring(0, 5000));
 
 
             throw new Error(
-                "Không tìm thấy element DOWNLOAD APK sau khi chờ."
+                "Không tìm thấy element DOWNLOAD APK."
             );
 
         }
 
-
-        // ==================================================
-        // 10. SHOW TARGET
-        // ==================================================
 
         console.log("");
         console.log(
@@ -870,62 +583,15 @@ async function main() {
         );
 
 
-        const targetInfo =
-            await downloadButton.evaluate(
-                element => ({
-
-                    tag:
-                        element.tagName,
-
-                    text:
-                        (
-                            element.innerText ||
-                            ""
-                        ).trim(),
-
-                    href:
-                        element.href ||
-                        element.getAttribute(
-                            "href"
-                        ) ||
-                        "",
-
-                    outerHTML:
-                        element.outerHTML
-                            .substring(
-                                0,
-                                2000
-                            )
-
-                })
-            );
-
-
-        console.log(
-            JSON.stringify(
-                targetInfo,
-                null,
-                2
-            )
-        );
-
-
-        // ==================================================
-        // 11. CLICK DOWNLOAD APK
-        // ==================================================
-
-        console.log("");
-        console.log(
-            "CLICK DOWNLOAD APK..."
-        );
-
+        // =================================================
+        // CLICK DOWNLOAD
+        // =================================================
 
         const downloadPromise =
             page.waitForEvent(
                 "download",
                 {
-                    timeout:
-                        180000
+                    timeout: 180000
                 }
             );
 
@@ -943,23 +609,12 @@ async function main() {
             await downloadPromise;
 
 
-        // ==================================================
-        // 12. SAVE
-        // ==================================================
+        // =================================================
+        // SAVE
+        // =================================================
 
         const filename =
-            `com.google.android.youtube-` +
-            `${VERSION}-all.apk`;
-
-
-        console.log("");
-        console.log(
-            "SAVING:"
-        );
-
-        console.log(
-            filename
-        );
+            `com.google.android.youtube-${VERSION}-all.apk`;
 
 
         await download.saveAs(
@@ -967,27 +622,19 @@ async function main() {
         );
 
 
-        // ==================================================
-        // 13. VERIFY
-        // ==================================================
+        // =================================================
+        // VERIFY
+        // =================================================
 
-        if (
-            !fs.existsSync(
-                filename
-            )
-        ) {
-
+        if (!fs.existsSync(filename)) {
             throw new Error(
-                "APK không tồn tại sau download."
+                "APK không tồn tại."
             );
-
         }
 
 
         const size =
-            fs.statSync(
-                filename
-            ).size;
+            fs.statSync(filename).size;
 
 
         console.log("");
@@ -996,7 +643,7 @@ async function main() {
         );
 
         console.log(
-            "SUCCESS"
+            "APK DOWNLOADED"
         );
 
         console.log(
@@ -1007,11 +654,14 @@ async function main() {
         console.log(
             "SIZE:",
             (
-                size /
-                1024 /
-                1024
+                size / 1024 / 1024
             ).toFixed(2),
             "MB"
+        );
+
+        console.log(
+            "TYPE:",
+            release.type
         );
 
         console.log(
@@ -1031,9 +681,9 @@ async function main() {
         }
 
 
-        // ==================================================
-        // 14. GITHUB OUTPUT
-        // ==================================================
+        // =================================================
+        // OUTPUT
+        // =================================================
 
         if (
             process.env.GITHUB_OUTPUT
@@ -1041,22 +691,12 @@ async function main() {
 
             fs.appendFileSync(
                 process.env.GITHUB_OUTPUT,
-
-                `release_type=${selectedRelease.type}\n`
+                `release_type=${release.type}\n`
             );
-
 
             fs.appendFileSync(
                 process.env.GITHUB_OUTPUT,
-
-                `release_url=${selectedRelease.href}\n`
-            );
-
-
-            fs.appendFileSync(
-                process.env.GITHUB_OUTPUT,
-
-                `download_page=${selectedApkPage.href}\n`
+                `download_page=${selectedPage.href}\n`
             );
 
         }
@@ -1071,24 +711,22 @@ async function main() {
 }
 
 
-main().catch(
-    error => {
+main().catch(error => {
 
-        console.error("");
-        console.error(
-            "======================================"
-        );
+    console.error("");
+    console.error(
+        "======================================"
+    );
 
-        console.error(
-            "ERROR:",
-            error.message
-        );
+    console.error(
+        "ERROR:",
+        error.message
+    );
 
-        console.error(
-            "======================================"
-        );
+    console.error(
+        "======================================"
+    );
 
-        process.exit(1);
+    process.exit(1);
 
-    }
-);
+});
