@@ -1,4 +1,4 @@
-name: Download YouTube APKMirror to Synology
+name: YouTube APKMirror to Synology
 
 on:
   workflow_dispatch:
@@ -11,38 +11,36 @@ permissions:
 jobs:
   download-upload:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip openssh-client
-          python3 -m pip install --upgrade --break-system-packages requests beautifulsoup4 lxml
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Read version.txt
+      - name: Install Playwright
+        run: |
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Read version
         id: version
         run: |
           VERSION="$(tr -d '[:space:]' < version.txt)"
           if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "version.txt không hợp lệ: $VERSION"
+            echo "Invalid version.txt: $VERSION"
             exit 1
           fi
-          echo "Version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Find Stable or Beta APK
+      - name: Find Stable or Beta and download APK
         id: apk
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: python3 scripts/find_youtube.py
-
-      - name: Download APK
-        env:
-          DOWNLOAD_URL: ${{ steps.apk.outputs.download_url }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: python3 scripts/download_youtube.py
+        run: node scripts/apkmirror.js
 
       - name: Verify APK
         env:
@@ -51,9 +49,18 @@ jobs:
           FILE="com.google.android.youtube-${VERSION}-all.apk"
           test -f "$FILE"
           SIZE=$(stat -c%s "$FILE")
-          if [ "$SIZE" -lt 10000000 ]; then exit 1; fi
-          if ! unzip -t "$FILE" >/dev/null 2>&1; then exit 1; fi
-          sha256sum "$FILE"
+          echo "Size: $SIZE bytes"
+          if [ "$SIZE" -lt 10000000 ]; then
+            echo "APK is too small"
+            exit 1
+          fi
+          unzip -t "$FILE" >/dev/null
+
+      - name: SHA256 check
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sha256sum "com.google.android.youtube-${VERSION}-all.apk"
 
       - name: Setup SSH
         env:
@@ -62,15 +69,22 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/synology_key
           chmod 600 ~/.ssh/synology_key
-          ssh-keyscan -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" "${{ secrets.SYNOLOGY_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Test SSH
         run: |
-          ssh -i ~/.ssh/synology_key -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" "echo SSH connection OK"
+          ssh -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "echo SSH connection OK"
 
-      - name: Create destination directory
+      - name: Create destination
         run: |
-          ssh -i ~/.ssh/synology_key -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" "mkdir -p '${{ secrets.SYNOLOGY_PATH }}'"
+          ssh -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "mkdir -p '${{ secrets.SYNOLOGY_PATH }}'"
 
       - name: Check existing APK
         id: exists
@@ -78,8 +92,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           FILE="com.google.android.youtube-${VERSION}-all.apk"
-          if ssh -i ~/.ssh/synology_key -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" "test -f '${{ secrets.SYNOLOGY_PATH }}/${FILE}'"; then
+          if ssh -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "test -f '${{ secrets.SYNOLOGY_PATH }}/${FILE}'"; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$FILE already exists"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -90,15 +108,24 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           FILE="com.google.android.youtube-${VERSION}-all.apk"
-          scp -O -i ~/.ssh/synology_key -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" "$FILE" "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
+          scp -O \
+            -i ~/.ssh/synology_key \
+            -P "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "$FILE" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}:${{ secrets.SYNOLOGY_PATH }}/"
 
-      - name: Verify uploaded APK
+      - name: Verify remote file
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           FILE="com.google.android.youtube-${VERSION}-all.apk"
-          ssh -i ~/.ssh/synology_key -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" "ls -lh '${{ secrets.SYNOLOGY_PATH }}/${FILE}'"
+          ssh -i ~/.ssh/synology_key \
+            -p "${{ secrets.SYNOLOGY_SSH_PORT || '22' }}" \
+            "${{ secrets.SYNOLOGY_USER }}@${{ secrets.SYNOLOGY_HOST }}" \
+            "ls -lh '${{ secrets.SYNOLOGY_PATH }}/${FILE}'"
 
       - name: Cleanup
         if: always()
-        run: rm -f ~/.ssh/synology_key *.apk
+        run: |
+          rm -f ~/.ssh/synology_key
+          rm -f *.apk
