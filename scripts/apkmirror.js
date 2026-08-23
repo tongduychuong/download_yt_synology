@@ -1,79 +1,457 @@
-const { chromium } = require("playwright");
+const https = require("https");
 const fs = require("fs");
 const { execFileSync } = require("child_process");
 
 const VERSION = process.env.VERSION;
 
 if (!VERSION) {
-    throw new Error("VERSION is missing");
+    console.error("ERROR: VERSION is missing");
+    process.exit(1);
 }
 
-const BASE_URL = "https://www.apkmirror.com";
+const BASE = "https://www.apkmirror.com";
 
-const VERSION_DASH = VERSION.replace(/\./g, "-");
+const V = VERSION.replace(/\./g, "-");
 
 const USER_AGENT =
     "Mozilla/5.0 (Linux; Android 14; Mobile) " +
     "AppleWebKit/537.36 " +
-    "(KHTML, like Gecko) " +
-    "Chrome/131.0.0.0 Mobile Safari/537.36";
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
 
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+// ==================================================
+// HTTP GET
+// ==================================================
+
+function get(url, redirect = true) {
+
+    return new Promise((resolve, reject) => {
+
+        const request = https.get(
+            url,
+            {
+                headers: {
+                    "User-Agent": USER_AGENT,
+                    "Accept":
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language":
+                        "en-US,en;q=0.9"
+                }
+            },
+            response => {
+
+                let data = "";
+
+                if (
+                    redirect &&
+                    [301, 302, 303, 307, 308]
+                        .includes(response.statusCode)
+                ) {
+
+                    const location =
+                        response.headers.location;
+
+                    if (!location) {
+
+                        reject(
+                            new Error(
+                                `HTTP ${response.statusCode} without Location`
+                            )
+                        );
+
+                        return;
+
+                    }
+
+                    response.resume();
+
+                    resolve(
+                        get(
+                            new URL(
+                                location,
+                                url
+                            ).href
+                        )
+                    );
+
+                    return;
+
+                }
+
+
+                response.setEncoding("utf8");
+
+                response.on(
+                    "data",
+                    chunk => {
+                        data += chunk;
+                    }
+                );
+
+                response.on(
+                    "end",
+                    () => {
+
+                        resolve({
+                            status:
+                                response.statusCode,
+
+                            headers:
+                                response.headers,
+
+                            body:
+                                data,
+
+                            url
+                        });
+
+                    }
+                );
+
+            }
+        );
+
+
+        request.setTimeout(
+            120000,
+            () => {
+
+                request.destroy(
+                    new Error(
+                        "HTTP timeout"
+                    )
+                );
+
+            }
+        );
+
+
+        request.on(
+            "error",
+            reject
+        );
+
+    });
+
 }
 
 
-function absUrl(url) {
+// ==================================================
+// DOWNLOAD FILE
+// ==================================================
+
+function download(url, filename) {
+
+    return new Promise(
+        (resolve, reject) => {
+
+            const file =
+                fs.createWriteStream(
+                    filename
+                );
+
+
+            const request =
+                https.get(
+                    url,
+                    {
+                        headers: {
+                            "User-Agent":
+                                USER_AGENT,
+                            "Accept":
+                                "*/*"
+                        }
+                    },
+                    response => {
+
+                        if (
+                            [301, 302, 303, 307, 308]
+                                .includes(
+                                    response.statusCode
+                                )
+                        ) {
+
+                            const location =
+                                response.headers.location;
+
+                            file.close();
+
+                            fs.unlinkSync(
+                                filename
+                            );
+
+                            if (!location) {
+
+                                reject(
+                                    new Error(
+                                        "Redirect without Location"
+                                    )
+                                );
+
+                                return;
+
+                            }
+
+                            const next =
+                                new URL(
+                                    location,
+                                    url
+                                ).href;
+
+                            download(
+                                next,
+                                filename
+                            )
+                            .then(resolve)
+                            .catch(reject);
+
+                            return;
+
+                        }
+
+
+                        if (
+                            response.statusCode !== 200
+                        ) {
+
+                            file.close();
+
+                            fs.unlinkSync(
+                                filename
+                            );
+
+                            reject(
+                                new Error(
+                                    `HTTP ${response.statusCode}`
+                                )
+                            );
+
+                            return;
+
+                        }
+
+
+                        response.pipe(file);
+
+
+                        file.on(
+                            "finish",
+                            () => {
+
+                                file.close(
+                                    () => resolve()
+                                );
+
+                            }
+                        );
+
+                    }
+                );
+
+
+            request.setTimeout(
+                180000,
+                () => {
+
+                    request.destroy(
+                        new Error(
+                            "Download timeout"
+                        )
+                    );
+
+                }
+            );
+
+
+            request.on(
+                "error",
+                error => {
+
+                    file.close();
+
+                    if (
+                        fs.existsSync(
+                            filename
+                        )
+                    ) {
+
+                        fs.unlinkSync(
+                            filename
+                        );
+
+                    }
+
+                    reject(error);
+
+                }
+            );
+
+        }
+    );
+
+}
+
+
+// ==================================================
+// FIND DOWNLOAD BUTTON
+// ==================================================
+
+function findDownloadButton(html) {
+
+    // Tương đương:
+    //
+    // grep -m1 'downloadButton'
+    // grep -m1 'href='
+
+    const patterns = [
+
+        /<a[^>]*class=["'][^"']*downloadButton[^"']*["'][^>]*href=["']([^"']+)["']/i,
+
+        /<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*downloadButton[^"']*["']/i,
+
+        /downloadButton[\s\S]{0,1000}?href=["']([^"']+)["']/i
+
+    ];
+
+
+    for (
+        const pattern
+        of patterns
+    ) {
+
+        const match =
+            html.match(pattern);
+
+
+        if (
+            match &&
+            match[1]
+        ) {
+
+            return cleanUrl(
+                match[1]
+            );
+
+        }
+
+    }
+
+
+    return null;
+
+}
+
+
+// ==================================================
+// FIND HERE
+// ==================================================
+
+function findHere(html) {
+
+    // Tương đương:
+    //
+    // grep -m1 '>here<'
+    // grep -m1 'href='
+
+    const patterns = [
+
+        /<a[^>]+href=["']([^"']+)["'][^>]*>\s*here\s*<\/a>/i,
+
+        /<a[^>]+href=["']([^"']+)["'][^>]*>\s*<[^>]*>\s*here\s*<\/[^>]*>\s*<\/a>/i,
+
+        /href=["']([^"']+)["'][^>]*>\s*here\s*</i
+
+    ];
+
+
+    for (
+        const pattern
+        of patterns
+    ) {
+
+        const match =
+            html.match(pattern);
+
+
+        if (
+            match &&
+            match[1]
+        ) {
+
+            return cleanUrl(
+                match[1]
+            );
+
+        }
+
+    }
+
+
+    return null;
+
+}
+
+
+// ==================================================
+// URL CLEAN
+// ==================================================
+
+function cleanUrl(url) {
 
     if (!url) {
         return "";
     }
 
-    url = url
-        .replace(/&amp;/g, "&")
-        .replace(/amp;/g, "");
+    url =
+        url
+            .replace(
+                /&amp;/g,
+                "&"
+            )
+            .replace(
+                /amp;/g,
+                ""
+            );
 
-    if (url.startsWith("http://")) {
+
+    if (
+        url.startsWith("http://") ||
+        url.startsWith("https://")
+    ) {
+
         return url;
+
     }
 
-    if (url.startsWith("https://")) {
-        return url;
-    }
 
-    if (url.startsWith("//")) {
+    if (
+        url.startsWith("//")
+    ) {
+
         return "https:" + url;
+
     }
 
-    if (url.startsWith("/")) {
-        return BASE_URL + url;
+
+    if (
+        url.startsWith("/")
+    ) {
+
+        return BASE + url;
+
     }
 
-    return BASE_URL + "/" + url;
-}
 
-
-function releaseUrls() {
-
-    return [
-        `google-inc/youtube/youtube-${VERSION_DASH}-release/youtube-${VERSION_DASH}-2-android-apk-download`,
-
-        `google-inc/youtube/youtube-${VERSION_DASH}-release/youtube-${VERSION_DASH}-android-apk-download`,
-
-        `google-inc/youtube/youtube-${VERSION_DASH}-release/youtube-${VERSION_DASH}-3-android-apk-download`,
-
-        `google-inc/youtube/youtube-${VERSION_DASH}-release/youtube-${VERSION_DASH}-4-android-apk-download`
-    ];
+    return BASE + "/" + url;
 
 }
 
 
-function inspectFile(filename) {
+// ==================================================
+// CHECK APK
+// ==================================================
 
-    if (!fs.existsSync(filename)) {
-        return "missing";
-    }
+function checkFile(filename) {
 
     try {
 
@@ -85,18 +463,17 @@ function inspectFile(filename) {
                     filename
                 ],
                 {
-                    encoding: "utf8",
-                    stdio: [
-                        "ignore",
-                        "pipe",
-                        "ignore"
-                    ]
+                    encoding:
+                        "utf8"
                 }
             );
 
 
+        // Bundle / APKS
         if (
-            output.includes("base.apk")
+            output.includes(
+                "base.apk"
+            )
         ) {
 
             return "bundle";
@@ -104,6 +481,7 @@ function inspectFile(filename) {
         }
 
 
+        // APK
         if (
             output.includes(
                 "AndroidManifest.xml"
@@ -127,367 +505,65 @@ function inspectFile(filename) {
 }
 
 
-async function getDownloadButton(page) {
+// ==================================================
+// CANDIDATES
+// ==================================================
 
-    // ==================================================
-    // TƯƠNG ĐƯƠNG:
-    //
-    // grep 'downloadButton'
-    // ==================================================
+const candidates = [
 
-    const selectors = [
+    `google-inc/youtube/youtube-${V}-release/youtube-${V}-2-android-apk-download`,
 
-        "a.downloadButton",
+    `google-inc/youtube/youtube-${V}-release/youtube-${V}-android-apk-download`,
 
-        ".downloadButton a",
+    `google-inc/youtube/youtube-${V}-release/youtube-${V}-3-android-apk-download`,
 
-        "a[class*='downloadButton']",
+    `google-inc/youtube/youtube-${V}-release/youtube-${V}-4-android-apk-download`
 
-        "[class*='downloadButton']"
-
-    ];
+];
 
 
-    for (
-        const selector
-        of selectors
-    ) {
+// ==================================================
+// MAIN
+// ==================================================
 
-        const locator =
-            page.locator(
-                selector
-            );
+async function main() {
 
+    console.log("");
+    console.log(
+        "======================================"
+    );
 
-        const count =
-            await locator.count();
+    console.log(
+        "YouTube APKMirror Downloader"
+    );
 
+    console.log(
+        "VERSION:",
+        VERSION
+    );
 
-        if (
-            count === 0
-        ) {
-            continue;
-        }
+    console.log(
+        "Playwright: DISABLED"
+    );
 
-
-        for (
-            let i = 0;
-            i < count;
-            i++
-        ) {
-
-            const element =
-                locator.nth(i);
-
-
-            const href =
-                await element.getAttribute(
-                    "href"
-                );
-
-
-            if (
-                href
-            ) {
-
-                return absUrl(
-                    href
-                );
-
-            }
-
-        }
-
-    }
-
-
-    // ==================================================
-    // FALLBACK: SEARCH HTML
-    // ==================================================
-
-    const html =
-        await page.content();
-
-
-    const match =
-        html.match(
-            /class=["'][^"']*downloadButton[^"']*["'][^>]*href=["']([^"']+)["']/i
-        );
-
-
-    if (
-        match &&
-        match[1]
-    ) {
-
-        return absUrl(
-            match[1]
-        );
-
-    }
-
-
-    return null;
-
-}
-
-
-async function getHereLink(page) {
-
-    // ==================================================
-    // TƯƠNG ĐƯƠNG:
-    //
-    // grep -m1 '>here<'
-    // ==================================================
-
-    const here =
-        page.getByText(
-            "here",
-            {
-                exact: true
-            }
-        );
-
-
-    const count =
-        await here.count();
+    console.log(
+        "======================================"
+    );
 
 
     for (
         let i = 0;
-        i < count;
+        i < candidates.length;
         i++
     ) {
 
-        const element =
-            here.nth(i);
+        const page =
+            `${BASE}/apk/${candidates[i]}/`;
 
 
-        const href =
-            await element.getAttribute(
-                "href"
-            );
+        const temp =
+            `youtube_${i + 1}.tmp`;
 
-
-        if (
-            href
-        ) {
-
-            return absUrl(
-                href
-            );
-
-        }
-
-
-        const parent =
-            element.locator(
-                "xpath=ancestor::a[1]"
-            );
-
-
-        if (
-            await parent.count()
-        ) {
-
-            const parentHref =
-                await parent.getAttribute(
-                    "href"
-                );
-
-
-            if (
-                parentHref
-            ) {
-
-                return absUrl(
-                    parentHref
-                );
-
-            }
-
-        }
-
-    }
-
-
-    // ==================================================
-    // FALLBACK HTML
-    // ==================================================
-
-    const html =
-        await page.content();
-
-
-    const match =
-        html.match(
-            /<a[^>]+href=["']([^"']+)["'][^>]*>\s*here\s*<\/a>/i
-        );
-
-
-    if (
-        match &&
-        match[1]
-    ) {
-
-        return absUrl(
-            match[1]
-        );
-
-    }
-
-
-    // ==================================================
-    // FALLBACK: FIND href + text nearby
-    // ==================================================
-
-    const matches =
-        [
-            ...html.matchAll(
-                /href=["']([^"']+)["'][^>]*>[^<]*here[^<]*</gi
-            )
-        ];
-
-
-    if (
-        matches.length > 0
-    ) {
-
-        return absUrl(
-            matches[0][1]
-        );
-
-    }
-
-
-    return null;
-
-}
-
-
-async function downloadFile(
-    context,
-    url,
-    filename
-) {
-
-    console.log("");
-    console.log(
-        "REAL DOWNLOAD URL:"
-    );
-
-    console.log(
-        url
-    );
-
-
-    // ==================================================
-    // DÙNG REQUEST CONTEXT CỦA PLAYWRIGHT
-    // SESSION COOKIE ĐƯỢC GIỮ
-    // ==================================================
-
-    const response =
-        await context.request.get(
-            url,
-            {
-                timeout: 180000,
-                maxRedirects: 10,
-                failOnStatusCode: false
-            }
-        );
-
-
-    console.log(
-        "HTTP:",
-        response.status()
-    );
-
-
-    if (
-        !response.ok()
-    ) {
-
-        throw new Error(
-            `Download HTTP ${response.status()}`
-        );
-
-    }
-
-
-    const buffer =
-        await response.body();
-
-
-    if (
-        buffer.length <
-        1000000
-    ) {
-
-        throw new Error(
-            `Downloaded data quá nhỏ: ${buffer.length} bytes`
-        );
-
-    }
-
-
-    fs.writeFileSync(
-        filename,
-        buffer
-    );
-
-
-    return filename;
-
-}
-
-
-async function main() {
-
-    const browser =
-        await chromium.launch({
-
-            headless: true,
-
-            args: [
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled"
-            ]
-
-        });
-
-
-    const context =
-        await browser.newContext({
-
-            userAgent:
-                USER_AGENT,
-
-            locale:
-                "en-US",
-
-            viewport: {
-                width: 390,
-                height: 844
-            },
-
-            isMobile: true,
-
-            hasTouch: true,
-
-            extraHTTPHeaders: {
-                "Accept-Language":
-                    "en-US,en;q=0.9"
-            }
-
-        });
-
-
-    const page =
-        await context.newPage();
-
-
-    try {
 
         console.log("");
         console.log(
@@ -495,12 +571,11 @@ async function main() {
         );
 
         console.log(
-            "YouTube APKMirror Downloader"
+            `CANDIDATE ${i + 1}/4`
         );
 
         console.log(
-            "VERSION:",
-            VERSION
+            page
         );
 
         console.log(
@@ -508,395 +583,325 @@ async function main() {
         );
 
 
-        const candidates =
-            releaseUrls();
+        try {
+
+            // ----------------------------------------------
+            // RELEASE/DOWNLOAD PAGE
+            // ----------------------------------------------
+
+            const first =
+                await get(page);
 
 
-        // ==================================================
-        // THỬ 4 URL GIỐNG CODE TAIYT
-        // ==================================================
-
-        for (
-            let index = 0;
-            index < candidates.length;
-            index++
-        ) {
-
-            const relativeUrl =
-                candidates[index];
+            console.log(
+                "HTTP:",
+                first.status
+            );
 
 
-            const releaseUrl =
-                `${BASE_URL}/apk/${relativeUrl}/`;
+            if (
+                first.status !== 200
+            ) {
+
+                console.log(
+                    "Skip HTTP",
+                    first.status
+                );
+
+                continue;
+
+            }
 
 
-            const tempName =
-                `youtube_candidate_${index + 1}.zip`;
+            // ----------------------------------------------
+            // downloadButton
+            // ----------------------------------------------
+
+            const downloadPage =
+                findDownloadButton(
+                    first.body
+                );
+
+
+            if (
+                !downloadPage
+            ) {
+
+                console.log(
+                    "Không tìm thấy downloadButton"
+                );
+
+                continue;
+
+            }
+
+
+            const downloadUrl =
+                new URL(
+                    downloadPage,
+                    page
+                ).href;
 
 
             console.log("");
             console.log(
-                "======================================"
+                "DOWNLOAD PAGE:"
             );
 
             console.log(
-                `TRY CANDIDATE ${index + 1}/4`
+                downloadUrl
             );
+
+
+            // ----------------------------------------------
+            // WAIT 15 SECONDS
+            // ----------------------------------------------
 
             console.log(
-                releaseUrl
-            );
-
-            console.log(
-                "======================================"
+                "Waiting 15 seconds..."
             );
 
 
-            try {
-
-                // ==================================================
-                // 1. OPEN APKMIRROR DOWNLOAD PAGE
-                // ==================================================
-
-                await page.goto(
-                    releaseUrl,
-                    {
-                        waitUntil:
-                            "domcontentloaded",
-
-                        timeout:
-                            120000
-                    }
-                );
-
-
-                // ==================================================
-                // 2. CHỜ ANTI-ADBLOCK
-                // ==================================================
-
-                console.log(
-                    "Waiting 20 seconds..."
-                );
-
-
-                for (
-                    let seconds = 20;
-                    seconds > 0;
-                    seconds--
-                ) {
-
-                    process.stdout.write(
-                        `\rWaiting ${seconds}s...`
-                    );
-
-                    await sleep(1000);
-
-                }
-
-
-                console.log("");
-
-
-                // ==================================================
-                // 3. TÌM downloadButton
-                // ==================================================
-
-                console.log(
-                    "Finding downloadButton..."
-                );
-
-
-                const apkPage =
-                    await getDownloadButton(
-                        page
-                    );
-
-
-                if (
-                    !apkPage
-                ) {
-
-                    console.log(
-                        "downloadButton not found."
-                    );
-
-                    continue;
-
-                }
-
-
-                console.log(
-                    "downloadButton:"
-                );
-
-                console.log(
-                    apkPage
-                );
-
-
-                // ==================================================
-                // 4. MỞ TRANG DOWNLOAD
-                // ==================================================
-
-                await page.goto(
-                    apkPage,
-                    {
-                        waitUntil:
-                            "domcontentloaded",
-
-                        timeout:
-                            120000
-                    }
-                );
-
-
-                // ==================================================
-                // 5. CHỜ 20 GIÂY
-                // ==================================================
-
-                console.log(
-                    "Waiting for real download page..."
-                );
-
-
-                for (
-                    let seconds = 20;
-                    seconds > 0;
-                    seconds--
-                ) {
-
-                    process.stdout.write(
-                        `\rWaiting ${seconds}s...`
-                    );
-
-                    await sleep(1000);
-
-                }
-
-
-                console.log("");
-
-
-                // ==================================================
-                // 6. TÌM >here<
-                // ==================================================
-
-                console.log(
-                    "Finding 'here'..."
-                );
-
-
-                const realUrl =
-                    await getHereLink(
-                        page
-                    );
-
-
-                if (
-                    !realUrl
-                ) {
-
-                    console.log(
-                        "here link not found."
-                    );
-
-                    continue;
-
-                }
-
-
-                console.log(
-                    "here:"
-                );
-
-                console.log(
-                    realUrl
-                );
-
-
-                // ==================================================
-                // 7. DOWNLOAD
-                // ==================================================
-
-                console.log(
-                    "Downloading candidate..."
-                );
-
-
-                await downloadFile(
-                    context,
-                    realUrl,
-                    tempName
-                );
-
-
-                // ==================================================
-                // 8. KIỂM TRA APK HAY BUNDLE
-                // ==================================================
-
-                const type =
-                    inspectFile(
-                        tempName
-                    );
-
-
-                console.log(
-                    "Detected:",
-                    type
-                );
-
-
-                // ==================================================
-                // APK THƯỜNG
-                // ==================================================
-
-                if (
-                    type === "apk"
-                ) {
-
-                    const finalName =
-                        `com.google.android.youtube-${VERSION}-all.apk`;
-
-
-                    fs.renameSync(
-                        tempName,
-                        finalName
-                    );
-
-
-                    const size =
-                        fs.statSync(
-                            finalName
-                        ).size;
-
-
-                    console.log("");
-                    console.log(
-                        "======================================"
-                    );
-
-                    console.log(
-                        "SUCCESS - NORMAL APK"
-                    );
-
-                    console.log(
-                        "Candidate:",
-                        index + 1
-                    );
-
-                    console.log(
-                        "File:",
-                        finalName
-                    );
-
-                    console.log(
-                        "Size:",
-                        (
-                            size /
-                            1024 /
-                            1024
-                        ).toFixed(2),
-                        "MB"
-                    );
-
-                    console.log(
-                        "======================================"
-                    );
-
-
-                    return;
-
-                }
-
-
-                // ==================================================
-                // BUNDLE / APKS
-                // ==================================================
-
-                if (
-                    type === "bundle"
-                ) {
-
-                    console.log(
-                        "Candidate is BUNDLE/APKS."
-                    );
-
-                    console.log(
-                        "Skip."
-                    );
-
-
-                    fs.unlinkSync(
-                        tempName
-                    );
-
-
-                    continue;
-
-                }
-
-
-                // ==================================================
-                // INVALID
-                // ==================================================
-
-                console.log(
-                    "Invalid download."
-                );
-
-
-                if (
-                    fs.existsSync(
-                        tempName
+            await new Promise(
+                resolve =>
+                    setTimeout(
+                        resolve,
+                        15000
                     )
-                ) {
-
-                    fs.unlinkSync(
-                        tempName
-                    );
-
-                }
+            );
 
 
-            } catch (error) {
+            // ----------------------------------------------
+            // SECOND PAGE
+            // ----------------------------------------------
+
+            const second =
+                await get(
+                    downloadUrl
+                );
+
+
+            console.log(
+                "DOWNLOAD PAGE HTTP:",
+                second.status
+            );
+
+
+            if (
+                second.status !== 200
+            ) {
+
+                console.log(
+                    "Skip"
+                );
+
+                continue;
+
+            }
+
+
+            // ----------------------------------------------
+            // FIND HERE
+            // ----------------------------------------------
+
+            const realUrl =
+                findHere(
+                    second.body
+                );
+
+
+            if (
+                !realUrl
+            ) {
+
+                console.log(
+                    "Không tìm thấy link 'here'"
+                );
+
+                continue;
+
+            }
+
+
+            console.log("");
+            console.log(
+                "REAL DOWNLOAD:"
+            );
+
+            console.log(
+                realUrl
+            );
+
+
+            // ----------------------------------------------
+            // DOWNLOAD
+            // ----------------------------------------------
+
+            console.log(
+                "Downloading..."
+            );
+
+
+            await download(
+                realUrl,
+                temp
+            );
+
+
+            // ----------------------------------------------
+            // CHECK
+            // ----------------------------------------------
+
+            const type =
+                checkFile(
+                    temp
+                );
+
+
+            console.log(
+                "FILE TYPE:",
+                type
+            );
+
+
+            // ----------------------------------------------
+            // BUNDLE → BỎ
+            // ----------------------------------------------
+
+            if (
+                type === "bundle"
+            ) {
+
+                console.log(
+                    "Bundle detected."
+                );
+
+                console.log(
+                    "Skip candidate."
+                );
+
+
+                fs.unlinkSync(
+                    temp
+                );
+
+
+                continue;
+
+            }
+
+
+            // ----------------------------------------------
+            // APK → SAVE
+            // ----------------------------------------------
+
+            if (
+                type === "apk"
+            ) {
+
+                const filename =
+                    `com.google.android.youtube-${VERSION}-all.apk`;
+
+
+                fs.renameSync(
+                    temp,
+                    filename
+                );
+
+
+                const size =
+                    fs.statSync(
+                        filename
+                    ).size;
+
 
                 console.log("");
                 console.log(
-                    `Candidate ${index + 1} failed:`
+                    "======================================"
                 );
 
                 console.log(
-                    error.message
+                    "SUCCESS"
+                );
+
+                console.log(
+                    "NORMAL APK FOUND"
+                );
+
+                console.log(
+                    "FILE:",
+                    filename
+                );
+
+                console.log(
+                    "SIZE:",
+                    (
+                        size /
+                        1024 /
+                        1024
+                    ).toFixed(2),
+                    "MB"
+                );
+
+                console.log(
+                    "======================================"
                 );
 
 
-                if (
-                    fs.existsSync(
-                        tempName
-                    )
-                ) {
+                return;
 
-                    fs.unlinkSync(
-                        tempName
-                    );
+            }
 
-                }
+
+            // ----------------------------------------------
+            // INVALID
+            // ----------------------------------------------
+
+            if (
+                fs.existsSync(
+                    temp
+                )
+            ) {
+
+                fs.unlinkSync(
+                    temp
+                );
+
+            }
+
+
+        } catch (error) {
+
+            console.log("");
+            console.log(
+                "Candidate failed:"
+            );
+
+            console.log(
+                error.message
+            );
+
+
+            if (
+                fs.existsSync(
+                    temp
+                )
+            ) {
+
+                fs.unlinkSync(
+                    temp
+                );
 
             }
 
         }
 
-
-        throw new Error(
-            `Không tìm thấy NORMAL APK cho YouTube ${VERSION}. Đã thử 4 candidate.`
-        );
-
-
-    } finally {
-
-        await browser.close();
-
     }
+
+
+    throw new Error(
+        `Không tìm thấy NORMAL APK cho ${VERSION}`
+    );
 
 }
 
