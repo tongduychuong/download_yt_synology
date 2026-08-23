@@ -1,4 +1,3 @@
-const https = require("https");
 const fs = require("fs");
 const { execFileSync } = require("child_process");
 
@@ -14,10 +13,7 @@ const BASE = "https://www.apkmirror.com";
 const V = VERSION.replace(/\./g, "-");
 
 const USER_AGENT =
-    "Mozilla/5.0 (Linux; Android 14; Mobile) " +
-    "AppleWebKit/537.36 " +
-    "(KHTML, like Gecko) " +
-    "Chrome/131.0.0.0 Mobile Safari/537.36";
+    "Mozilla/5.0 (Linux; Android 14; Mobile)";
 
 
 // ==================================================
@@ -30,107 +26,42 @@ function sleep(ms) {
 
 
 // ==================================================
-// HTTP GET
+// WGET GET
+//
+// Giống build.sh:
+// wget -q -U "Mozilla/5.0 (Linux; Android 14; Mobile)"
 // ==================================================
 
-function get(url) {
+function wget(url) {
 
-    return new Promise((resolve, reject) => {
+    try {
 
-        const req = https.get(
-            url,
+        return execFileSync(
+            "wget",
+            [
+                "-q",
+                "--max-redirect=10",
+                "--timeout=60",
+                "--tries=3",
+                "-U",
+                USER_AGENT,
+                url,
+                "-O",
+                "-"
+            ],
             {
-                headers: {
-                    "User-Agent": USER_AGENT,
-                    "Accept":
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language":
-                        "en-US,en;q=0.9"
-                }
-            },
-            res => {
-
-                const status = res.statusCode;
-
-                // Redirect
-                if (
-                    [301, 302, 303, 307, 308].includes(status)
-                ) {
-
-                    const location =
-                        res.headers.location;
-
-                    res.resume();
-
-                    if (!location) {
-                        reject(
-                            new Error(
-                                `HTTP ${status} without Location`
-                            )
-                        );
-                        return;
-                    }
-
-                    const next =
-                        new URL(
-                            location,
-                            url
-                        ).href;
-
-                    get(next)
-                        .then(resolve)
-                        .catch(reject);
-
-                    return;
-                }
-
-                let body = "";
-
-                res.setEncoding("utf8");
-
-                res.on(
-                    "data",
-                    chunk => {
-                        body += chunk;
-                    }
-                );
-
-                res.on(
-                    "end",
-                    () => {
-
-                        resolve({
-                            status,
-                            body,
-                            headers: res.headers,
-                            url
-                        });
-
-                    }
-                );
-
+                encoding: "utf8",
+                maxBuffer: 50 * 1024 * 1024
             }
         );
 
+    } catch (error) {
 
-        req.setTimeout(
-            120000,
-            () => {
-                req.destroy(
-                    new Error(
-                        "Request timeout"
-                    )
-                );
-            }
+        throw new Error(
+            `wget failed: ${url}`
         );
 
-
-        req.on(
-            "error",
-            reject
-        );
-
-    });
+    }
 
 }
 
@@ -141,169 +72,43 @@ function get(url) {
 
 function download(url, filename) {
 
-    return new Promise((resolve, reject) => {
+    console.log("");
+    console.log("Downloading:");
+    console.log(url);
 
-        const file =
-            fs.createWriteStream(
-                filename
-            );
+    try {
 
-
-        const req =
-            https.get(
+        execFileSync(
+            "wget",
+            [
+                "-q",
+                "--max-redirect=10",
+                "--timeout=180",
+                "--tries=5",
+                "-U",
+                USER_AGENT,
                 url,
-                {
-                    headers: {
-                        "User-Agent":
-                            USER_AGENT,
-                        "Accept":
-                            "*/*"
-                    }
-                },
-                res => {
-
-                    const status =
-                        res.statusCode;
-
-
-                    // Redirect
-                    if (
-                        [301, 302, 303, 307, 308]
-                            .includes(status)
-                    ) {
-
-                        const location =
-                            res.headers.location;
-
-                        res.resume();
-
-                        file.close();
-
-                        if (
-                            fs.existsSync(
-                                filename
-                            )
-                        ) {
-                            fs.unlinkSync(
-                                filename
-                            );
-                        }
-
-
-                        if (!location) {
-
-                            reject(
-                                new Error(
-                                    `HTTP ${status} without Location`
-                                )
-                            );
-
-                            return;
-
-                        }
-
-
-                        const next =
-                            new URL(
-                                location,
-                                url
-                            ).href;
-
-
-                        download(
-                            next,
-                            filename
-                        )
-                        .then(resolve)
-                        .catch(reject);
-
-
-                        return;
-
-                    }
-
-
-                    if (status !== 200) {
-
-                        res.resume();
-
-                        file.close();
-
-                        if (
-                            fs.existsSync(
-                                filename
-                            )
-                        ) {
-                            fs.unlinkSync(
-                                filename
-                            );
-                        }
-
-                        reject(
-                            new Error(
-                                `Download HTTP ${status}`
-                            )
-                        );
-
-                        return;
-
-                    }
-
-
-                    res.pipe(file);
-
-
-                    file.on(
-                        "finish",
-                        () => {
-
-                            file.close(
-                                () => resolve()
-                            );
-
-                        }
-                    );
-
-                }
-            );
-
-
-        req.setTimeout(
-            180000,
-            () => {
-
-                req.destroy(
-                    new Error(
-                        "Download timeout"
-                    )
-                );
-
+                "-O",
+                filename
+            ],
+            {
+                stdio: "inherit"
             }
         );
 
+    } catch (error) {
 
-        req.on(
-            "error",
-            error => {
+        if (
+            fs.existsSync(filename)
+        ) {
+            fs.unlinkSync(filename);
+        }
 
-                file.close();
-
-                if (
-                    fs.existsSync(
-                        filename
-                    )
-                ) {
-                    fs.unlinkSync(
-                        filename
-                    );
-                }
-
-                reject(error);
-
-            }
+        throw new Error(
+            "wget download failed"
         );
 
-    });
+    }
 
 }
 
@@ -313,10 +118,6 @@ function download(url, filename) {
 // ==================================================
 
 function cleanUrl(url) {
-
-    if (!url) {
-        return "";
-    }
 
     return url
         .replace(
@@ -337,7 +138,8 @@ function cleanUrl(url) {
 
 function absoluteUrl(url, base) {
 
-    url = cleanUrl(url);
+    url =
+        cleanUrl(url);
 
     if (
         url.startsWith("http://") ||
@@ -361,68 +163,60 @@ function absoluteUrl(url, base) {
 
 
 // ==================================================
-// FIND downloadButton
+// FIND DOWNLOAD BUTTON
 //
-// Giống build.sh:
+// Theo build.sh:
 //
 // grep -m1 'downloadButton'
 // tr ' ' '\n'
 // grep -m1 'href='
+// cut -d " -f2
 // ==================================================
 
 function findDownloadButton(html) {
 
     const match =
         html.match(
-            /<[^>]*class=["'][^"']*downloadButton[^"']*["'][^>]*>/i
-        );
-
-
-    if (!match) {
-        return null;
-    }
-
-
-    const tag =
-        match[0];
-
-
-    const href =
-        tag.match(
-            /href=["']([^"']+)["']/i
+            /downloadButton[\s\S]{0,2000}?href=["']([^"']+)["']/i
         );
 
 
     if (
-        !href ||
-        !href[1]
+        match &&
+        match[1]
     ) {
-        return null;
+
+        return cleanUrl(
+            match[1]
+        );
+
     }
 
 
-    return href[1];
+    return null;
 
 }
 
 
 // ==================================================
-// FIND "here"
+// FIND HERE
 //
-// Giống build.sh:
+// Theo build.sh:
 //
 // grep -m1 '>here<'
+// tr ' ' '\n'
+// grep -m1 'href='
 // ==================================================
 
 function findHere(html) {
 
     const patterns = [
 
-        /<a[^>]*href=["']([^"']+)["'][^>]*>\s*here\s*<\/a>/i,
+        /href=["']([^"']+)["'][^>]*>\s*here\s*</i,
 
-        /<a[^>]*href=["']([^"']+)["'][^>]*>[\s\S]{0,300}?<[^>]*>\s*here\s*<\/[^>]*>[\s\S]{0,100}?<\/a>/i,
+        /<a[^>]+href=["']([^"']+)["'][^>]*>\s*here\s*<\/a>/i,
 
-        /href=["']([^"']+)["'][^>]*>\s*here\s*</i
+        /<a[^>]+href=["']([^"']+)["'][^>]*>[\s\S]{0,300}?here[\s\S]{0,300}?<\/a>/i
 
     ];
 
@@ -440,7 +234,9 @@ function findHere(html) {
             match[1]
         ) {
 
-            return match[1];
+            return cleanUrl(
+                match[1]
+            );
 
         }
 
@@ -453,7 +249,7 @@ function findHere(html) {
 
 
 // ==================================================
-// CHECK APK / BUNDLE
+// CHECK FILE
 //
 // Giống build.sh
 // ==================================================
@@ -475,7 +271,6 @@ function checkFile(filename) {
             );
 
 
-        // Bundle / APKS
         if (
             output.includes(
                 "base.apk"
@@ -487,7 +282,6 @@ function checkFile(filename) {
         }
 
 
-        // Normal APK
         if (
             output.includes(
                 "AndroidManifest.xml"
@@ -519,7 +313,7 @@ async function downloadCandidate(
     number
 ) {
 
-    const firstUrl =
+    const page =
         `${BASE}/apk/${relativePath}`;
 
 
@@ -533,11 +327,11 @@ async function downloadCandidate(
     );
 
     console.log(
-        `YOUTUBE CANDIDATE ${number}`
+        `CANDIDATE ${number}/4`
     );
 
     console.log(
-        firstUrl
+        page
     );
 
     console.log(
@@ -548,40 +342,24 @@ async function downloadCandidate(
     try {
 
         // ==================================================
-        // FIRST PAGE
+        // FIRST REQUEST
         // ==================================================
 
-        let first =
-            await get(
-                firstUrl
-            );
-
-
         console.log(
-            "HTTP:",
-            first.status
+            "Opening APKMirror..."
         );
 
 
-        if (
-            first.status !== 200
-        ) {
-
-            throw new Error(
-                `HTTP ${first.status}`
-            );
-
-        }
+        let html =
+            wget(page);
 
 
         // ==================================================
-        // CHỜ 15 GIÂY
-        //
-        // Quan trọng theo yêu cầu của bạn
+        // WAIT 15 SECONDS
         // ==================================================
 
         console.log(
-            "Waiting 15 seconds for downloadButton..."
+            "Waiting 15 seconds..."
         );
 
 
@@ -603,12 +381,12 @@ async function downloadCandidate(
 
 
         // ==================================================
-        // TÌM DOWNLOAD BUTTON
+        // FIND downloadButton
         // ==================================================
 
         let button =
             findDownloadButton(
-                first.body
+                html
             );
 
 
@@ -619,32 +397,30 @@ async function downloadCandidate(
         if (!button) {
 
             console.log(
-                "downloadButton chưa có."
+                "downloadButton chưa xuất hiện."
             );
 
             console.log(
-                "Retry..."
+                "Retrying..."
             );
 
 
             for (
-                let retry = 0;
-                retry < 15;
+                let retry = 1;
+                retry <= 10;
                 retry++
             ) {
 
                 await sleep(1000);
 
 
-                first =
-                    await get(
-                        firstUrl
-                    );
+                html =
+                    wget(page);
 
 
                 button =
                     findDownloadButton(
-                        first.body
+                        html
                     );
 
 
@@ -672,45 +448,35 @@ async function downloadCandidate(
         }
 
 
-        const secondUrl =
+        const downloadPage =
             absoluteUrl(
                 button,
-                firstUrl
+                page
             );
 
 
+        console.log("");
         console.log(
-            "downloadButton:"
+            "DOWNLOAD PAGE:"
         );
 
         console.log(
-            secondUrl
+            downloadPage
         );
 
 
         // ==================================================
-        // SECOND PAGE
+        // SECOND REQUEST
         // ==================================================
 
-        let second =
-            await get(
-                secondUrl
+        let html2 =
+            wget(
+                downloadPage
             );
 
 
-        if (
-            second.status !== 200
-        ) {
-
-            throw new Error(
-                `Download page HTTP ${second.status}`
-            );
-
-        }
-
-
         // ==================================================
-        // CHỜ 15 GIÂY
+        // WAIT 15 SECONDS
         // ==================================================
 
         console.log(
@@ -741,7 +507,7 @@ async function downloadCandidate(
 
         let realUrl =
             findHere(
-                second.body
+                html2
             );
 
 
@@ -752,27 +518,27 @@ async function downloadCandidate(
         if (!realUrl) {
 
             console.log(
-                "'here' chưa có."
+                "'here' chưa xuất hiện."
             );
 
             for (
-                let retry = 0;
-                retry < 15;
+                let retry = 1;
+                retry <= 10;
                 retry++
             ) {
 
                 await sleep(1000);
 
 
-                second =
-                    await get(
-                        secondUrl
+                html2 =
+                    wget(
+                        downloadPage
                     );
 
 
                 realUrl =
                     findHere(
-                        second.body
+                        html2
                     );
 
 
@@ -803,7 +569,7 @@ async function downloadCandidate(
         realUrl =
             absoluteUrl(
                 realUrl,
-                secondUrl
+                downloadPage
             );
 
 
@@ -821,7 +587,7 @@ async function downloadCandidate(
         // DOWNLOAD
         // ==================================================
 
-        await download(
+        download(
             realUrl,
             temp
         );
@@ -838,115 +604,121 @@ async function downloadCandidate(
 
 
         console.log(
-            "TYPE:",
+            "FILE TYPE:",
             type
         );
 
+
+        // ==================================================
+        // BUNDLE
+        // ==================================================
 
         if (
             type === "bundle"
         ) {
 
             console.log(
-                "Bundle detected - skip."
+                "Bundle detected."
             );
+
+            console.log(
+                "Skip candidate."
+            );
+
 
             fs.unlinkSync(
                 temp
             );
 
-            return null;
+
+            return false;
 
         }
 
 
+        // ==================================================
+        // APK
+        // ==================================================
+
         if (
-            type !== "apk"
+            type === "apk"
         ) {
 
-            console.log(
-                "Invalid APK file."
-            );
+            const filename =
+                `com.google.android.youtube-${VERSION}-all.apk`;
+
 
             if (
                 fs.existsSync(
-                    temp
+                    filename
                 )
             ) {
+
                 fs.unlinkSync(
-                    temp
+                    filename
                 );
+
             }
 
-            return null;
 
-        }
-
-
-        // ==================================================
-        // NORMAL APK
-        // ==================================================
-
-        const finalName =
-            `com.google.android.youtube-${VERSION}-all.apk`;
-
-
-        if (
-            fs.existsSync(
-                finalName
-            )
-        ) {
-            fs.unlinkSync(
-                finalName
+            fs.renameSync(
+                temp,
+                filename
             );
+
+
+            const size =
+                fs.statSync(
+                    filename
+                ).size;
+
+
+            console.log("");
+            console.log(
+                "======================================"
+            );
+
+            console.log(
+                "SUCCESS"
+            );
+
+            console.log(
+                "NORMAL APK FOUND"
+            );
+
+            console.log(
+                "FILE:",
+                filename
+            );
+
+            console.log(
+                "SIZE:",
+                (
+                    size /
+                    1024 /
+                    1024
+                ).toFixed(2),
+                "MB"
+            );
+
+            console.log(
+                "======================================"
+            );
+
+
+            return true;
+
         }
 
 
-        fs.renameSync(
-            temp,
-            finalName
+        throw new Error(
+            "File downloaded không phải APK"
         );
 
-
-        const size =
-            fs.statSync(
-                finalName
-            ).size;
-
-
-        console.log("");
-        console.log(
-            "======================================"
-        );
-
-        console.log(
-            "NORMAL APK FOUND"
-        );
-
-        console.log(
-            "FILE:",
-            finalName
-        );
-
-        console.log(
-            "SIZE:",
-            (
-                size /
-                1024 /
-                1024
-            ).toFixed(2),
-            "MB"
-        );
-
-        console.log(
-            "======================================"
-        );
-
-
-        return finalName;
 
     } catch (error) {
 
+        console.log("");
         console.log(
             `Candidate ${number} failed:`
         );
@@ -969,7 +741,7 @@ async function downloadCandidate(
         }
 
 
-        return null;
+        return false;
 
     }
 
@@ -982,16 +754,15 @@ async function downloadCandidate(
 
 async function main() {
 
-    // Giống build.sh dòng 124-127
     const candidates = [
 
-        `google-inc/youtube/youtube-${V}-release/youtube-${V}-2-android-apk-download/`,
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-2-android-apk-download`,
 
-        `google-inc/youtube/youtube-${V}-release/youtube-${V}-android-apk-download/`,
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-android-apk-download`,
 
-        `google-inc/youtube/youtube-${V}-release/youtube-${V}-3-android-apk-download/`,
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-3-android-apk-download`,
 
-        `google-inc/youtube/youtube-${V}-release/youtube-${V}-4-android-apk-download/`
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-4-android-apk-download`
 
     ];
 
@@ -1002,7 +773,7 @@ async function main() {
     );
 
     console.log(
-        "YouTube APKMirror"
+        "YouTube APKMirror Downloader"
     );
 
     console.log(
@@ -1011,7 +782,7 @@ async function main() {
     );
 
     console.log(
-        "4 candidates"
+        "METHOD: wget"
     );
 
     console.log(
@@ -1019,32 +790,21 @@ async function main() {
     );
 
 
-    // ==================================================
-    // THỬ 4 LINK TUẦN TỰ
-    // ==================================================
-
     for (
         let i = 0;
         i < candidates.length;
         i++
     ) {
 
-        const result =
+        const success =
             await downloadCandidate(
                 candidates[i],
                 i + 1
             );
 
 
-        if (result) {
-
-            console.log("");
-            console.log(
-                "DOWNLOAD SUCCESS"
-            );
-
+        if (success) {
             return;
-
         }
 
     }
