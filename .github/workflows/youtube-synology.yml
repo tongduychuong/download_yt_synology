@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
 
@@ -18,189 +17,194 @@ jobs:
 
     steps:
 
-      # ================================================
+      # ==================================================
       # CHECKOUT
-      # ================================================
+      # ==================================================
 
       - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ================================================
-      # VERSION
-      # ================================================
+      # ==================================================
+      # READ VERSION
+      # ==================================================
 
-      - name: Read version
+      - name: Read version.txt
         shell: bash
         run: |
-
           set -e
 
-          if [ ! -f version.txt ]; then
+          if [ ! -f "version.txt" ]; then
             echo "ERROR: Không tìm thấy version.txt"
             exit 1
           fi
 
-          VERSION="$(
-            tr -d '\r\n' < version.txt |
-            xargs
-          )"
+          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
 
           if [ -z "$VERSION" ]; then
             echo "ERROR: version.txt rỗng"
             exit 1
           fi
 
-          echo "VERSION=$VERSION"
+          echo "======================================"
+          echo "YouTube VERSION: $VERSION"
+          echo "======================================"
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
 
-      # ================================================
-      # NODE
-      # ================================================
+      # ==================================================
+      # SETUP NODE
+      # ==================================================
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
 
-      # ================================================
-      # PLAYWRIGHT
-      # ================================================
+      # ==================================================
+      # CHECK DOWNLOADER
+      # ==================================================
 
-      - name: Install Playwright
+      - name: Check apkmirror.js
         shell: bash
         run: |
-
           set -e
 
-          npm init -y
+          if [ ! -f "scripts/apkmirror.js" ]; then
+            echo "ERROR: Không tìm thấy scripts/apkmirror.js"
+            exit 1
+          fi
 
-          npm install playwright
-
-          npx playwright install chromium
-
-          npx playwright install-deps chromium
+          echo "Downloader:"
+          ls -lh scripts/apkmirror.js
 
 
-      # ================================================
+      # ==================================================
       # DOWNLOAD APK
-      # ================================================
+      # ==================================================
 
       - name: Download YouTube APK
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-
           set -e
 
-          echo "================================"
-          echo "YouTube version: $VERSION"
-          echo "================================"
+          echo "======================================"
+          echo "DOWNLOAD YOUTUBE APK"
+          echo "VERSION: $VERSION"
+          echo "======================================"
 
           node scripts/apkmirror.js
 
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK không tồn tại:"
+            echo "ERROR: Không tìm thấy APK:"
             echo "$APK"
             exit 1
           fi
 
           echo ""
-          echo "APK đã tải:"
+          echo "APK DOWNLOADED:"
           ls -lh "$APK"
 
 
-      # ================================================
+      # ==================================================
       # VERIFY APK
-      # ================================================
+      # ==================================================
 
       - name: Verify APK
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-
           set -e
 
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Không tìm thấy APK"
+            echo "ERROR: APK không tồn tại"
             exit 1
           fi
 
-          SIZE=$(stat -c%s "$APK")
+          SIZE="$(stat -c%s "$APK")"
 
-          echo "APK: $APK"
-          echo "SIZE: $SIZE bytes"
+          echo "APK size: $SIZE bytes"
 
-          # APK YouTube phải lớn hơn 10 MB
           if [ "$SIZE" -lt 10485760 ]; then
-            echo "ERROR: APK quá nhỏ"
+            echo "ERROR: APK nhỏ hơn 10 MB"
             exit 1
           fi
 
-          # Kiểm tra file có phải ZIP/APK hợp lệ
-          if ! unzip -t "$APK" >/dev/null 2>&1; then
-            echo "ERROR: APK không phải file ZIP/APK hợp lệ"
-            exit 1
-          fi
-
-          echo "APK verification: OK"
+          echo "APK verification OK."
 
 
-      # ================================================
-      # CREATE GITHUB RELEASE
-      # ================================================
+      # ==================================================
+      # SHA256
+      # ==================================================
 
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ env.VERSION }}
+      - name: Generate SHA256
         shell: bash
+        env:
+          VERSION: ${{ env.VERSION }}
         run: |
-
           set -e
 
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
-          TAG="youtube-${VERSION}"
+          sha256sum "$APK" > "${APK}.sha256"
 
+          echo "SHA256:"
+          cat "${APK}.sha256"
+
+
+      # ==================================================
+      # CREATE RELEASE
+      # ==================================================
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ env.VERSION }}
+        run: |
+          set -e
+
+          APK="com.google.android.youtube-${VERSION}-all.apk"
+          SHA="${APK}.sha256"
+
+          TAG="youtube-${VERSION}"
           TITLE="YouTube ${VERSION}"
 
-          echo "================================"
+          echo "======================================"
+          echo "CREATE RELEASE"
           echo "TAG: $TAG"
           echo "TITLE: $TITLE"
-          echo "================================"
+          echo "======================================"
 
 
-          # --------------------------------
-          # Nếu release đã tồn tại
-          # --------------------------------
+          # ------------------------------------------------
+          # DELETE OLD RELEASE
+          # ------------------------------------------------
 
           if gh release view "$TAG" >/dev/null 2>&1; then
 
-            echo "Release $TAG đã tồn tại."
-
-            echo "Xóa release cũ..."
+            echo "Release already exists."
+            echo "Deleting old release..."
 
             gh release delete \
               "$TAG" \
-              --yes \
-              --cleanup-tag
+              --yes
 
           fi
 
 
-          # --------------------------------
-          # Nếu tag vẫn còn tồn tại
-          # --------------------------------
+          # ------------------------------------------------
+          # DELETE OLD TAG IF EXISTS
+          # ------------------------------------------------
 
           if git ls-remote \
             --tags \
@@ -208,197 +212,61 @@ jobs:
             "refs/tags/$TAG" |
             grep -q "$TAG"; then
 
-            echo "Tag $TAG vẫn tồn tại."
+            echo "Deleting old tag..."
 
-            gh api \
-              --method DELETE \
-              "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
-              || true
+            git push \
+              origin \
+              --delete "$TAG" || true
 
           fi
 
 
-          # --------------------------------
-          # Tạo release mới
-          # --------------------------------
-
-          echo "Tạo GitHub Release..."
+          # ------------------------------------------------
+          # CREATE RELEASE
+          # ------------------------------------------------
 
           gh release create \
             "$TAG" \
             "$APK" \
+            "$SHA" \
             --title "$TITLE" \
             --notes "YouTube ${VERSION} APK"
 
 
-          echo ""
-          echo "Release created successfully."
+          echo "======================================"
+          echo "RELEASE CREATED"
+          echo "======================================"
 
 
-      # ================================================
+      # ==================================================
       # SHOW RELEASE
-      # ================================================
+      # ==================================================
 
       - name: Show Release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ env.VERSION }}
-        shell: bash
         run: |
-
           set -e
 
           TAG="youtube-${VERSION}"
 
-          echo "================================"
-          echo "CURRENT RELEASE"
-          echo "================================"
-
           gh release view "$TAG"
 
 
-      # ================================================
-      # CLEANUP OLD RELEASES
-      #
-      # KEEP = 2
-      # DELETE = OLDER RELEASES
-      # DELETE TAGS TOO
-      # ================================================
+      # ==================================================
+      # CLEAN
+      # ==================================================
 
-      - name: Cleanup old releases and tags
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Cleanup
+        if: always()
         shell: bash
         run: |
+          rm -f \
+            youtube_1.tmp \
+            youtube_2.tmp \
+            youtube_3.tmp \
+            youtube_4.tmp
 
-          set -e
-
-          echo "================================"
-          echo "CLEANUP OLD RELEASES"
-          echo "KEEP: 2"
-          echo "================================"
-
-
-          # Lấy Release YouTube
-          # Chỉ xử lý tag bắt đầu bằng youtube-
-          RELEASES=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-            --jq '.[] | select(.tag_name | startswith("youtube-")) | [.id, .tag_name, .created_at] | @tsv')
-
-
-          COUNT=0
-
-
-          while IFS=$'\t' read -r RELEASE_ID TAG CREATED_AT; do
-
-            [ -z "$RELEASE_ID" ] && continue
-
-            COUNT=$((COUNT + 1))
-
-
-            if [ "$COUNT" -le 2 ]; then
-
-              echo ""
-              echo "KEEP:"
-              echo "  Release ID: $RELEASE_ID"
-              echo "  Tag: $TAG"
-              echo "  Created: $CREATED_AT"
-
-            else
-
-              echo ""
-              echo "DELETE:"
-              echo "  Release ID: $RELEASE_ID"
-              echo "  Tag: $TAG"
-              echo "  Created: $CREATED_AT"
-
-
-              # -------------------------------
-              # Delete Release
-              # -------------------------------
-
-              gh api \
-                --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-                || true
-
-
-              # -------------------------------
-              # Delete Tag
-              # -------------------------------
-
-              gh api \
-                --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
-                || true
-
-            fi
-
-          done <<< "$RELEASES"
-
-
-          echo ""
-          echo "================================"
-          echo "RELEASE CLEANUP COMPLETED"
-          echo "================================"
-
-
-      # ================================================
-      # CLEANUP WORKFLOW RUNS
-      #
-      # KEEP = 3
-      # DELETE = OLDER RUNS
-      # ================================================
-
-      - name: Cleanup old workflow runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-
-          set -e
-
-          echo "================================"
-          echo "CLEANUP WORKFLOW RUNS"
-          echo "KEEP: 3"
-          echo "================================"
-
-
-          COUNT=0
-
-          # GitHub API trả workflow runs
-          # theo thứ tự mới nhất -> cũ nhất
-
-          RUNS=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
-            --jq '.workflow_runs[].id')
-
-
-          for RUN_ID in $RUNS; do
-
-            COUNT=$((COUNT + 1))
-
-
-            if [ "$COUNT" -le 3 ]; then
-
-              echo "KEEP workflow run: $RUN_ID"
-
-            else
-
-              echo "DELETE workflow run: $RUN_ID"
-
-              gh api \
-                --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" \
-                || true
-
-            fi
-
-          done
-
-
-          echo ""
-          echo "================================"
-          echo "WORKFLOW CLEANUP COMPLETED"
-          echo "Kept: 3"
-          echo "================================"
+          echo "Cleanup completed."
