@@ -13,10 +13,10 @@ const SEARCH_URL =
     `${BASE_URL}/?post_type=app_release&searchtype=apk&s=youtube+${VERSION}`;
 
 const USER_AGENT =
-    "Mozilla/5.0 (X11; Linux x86_64) " +
+    "Mozilla/5.0 (Linux; Android 14; Mobile) " +
     "AppleWebKit/537.36 " +
     "(KHTML, like Gecko) " +
-    "Chrome/131.0.0.0 Safari/537.36";
+    "Chrome/131.0.0.0 Mobile Safari/537.36";
 
 
 function sleep(ms) {
@@ -24,9 +24,23 @@ function sleep(ms) {
 }
 
 
-function isBad(text) {
+function cleanUrl(url) {
 
-    const s = text.toLowerCase();
+    if (!url) {
+        return "";
+    }
+
+    return url
+        .replace(/&amp;/g, "&")
+        .replace(/amp;/g, "");
+
+}
+
+
+function isBadRelease(text) {
+
+    const s =
+        text.toLowerCase();
 
     return (
         s.includes("secondary") ||
@@ -34,12 +48,14 @@ function isBad(text) {
         s.includes("release-candidate") ||
         /\brc\b/.test(s)
     );
+
 }
 
 
 function isBeta(text) {
 
-    const s = text.toLowerCase();
+    const s =
+        text.toLowerCase();
 
     return (
         s.includes(" beta") ||
@@ -47,212 +63,120 @@ function isBeta(text) {
         s.includes(" beta-") ||
         s.includes("-beta/")
     );
+
 }
 
 
-async function getLinks(page) {
+async function links(page) {
 
-    return await page.locator("a[href]").evaluateAll(
-        elements =>
-            elements.map(element => ({
-                text: (
-                    element.innerText || ""
-                ).trim(),
+    return await page
+        .locator("a[href]")
+        .evaluateAll(
+            elements =>
+                elements.map(
+                    element => ({
+                        text:
+                            (
+                                element.innerText ||
+                                ""
+                            ).trim(),
 
-                href: element.href
-            }))
-    );
+                        href:
+                            element.href ||
+                            element.getAttribute(
+                                "href"
+                            ) ||
+                            ""
+                    })
+                )
+        );
 
 }
 
 
 async function main() {
 
-    const browser = await chromium.launch({
-        headless: true,
+    const browser =
+        await chromium.launch({
 
-        args: [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-blink-features=AutomationControlled"
-        ]
-    });
+            headless: true,
 
+            args: [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
 
-    const context = await browser.newContext({
-        userAgent: USER_AGENT,
-
-        locale: "en-US",
-
-        viewport: {
-            width: 1366,
-            height: 900
-        },
-
-        extraHTTPHeaders: {
-            "Accept-Language": "en-US,en;q=0.9"
-        }
-    });
+        });
 
 
-    const page = await context.newPage();
+    const context =
+        await browser.newContext({
+
+            userAgent:
+                USER_AGENT,
+
+            locale:
+                "en-US",
+
+            viewport: {
+                width: 390,
+                height: 844
+            },
+
+            isMobile: true,
+
+            hasTouch: true,
+
+            extraHTTPHeaders: {
+                "Accept-Language":
+                    "en-US,en;q=0.9"
+            }
+
+        });
+
+
+    const page =
+        await context.newPage();
 
 
     try {
 
-        // =================================================
-        // SEARCH
-        // =================================================
+        // ==================================================
+        // 1. SEARCH
+        // ==================================================
 
         console.log("");
-        console.log("======================================");
-        console.log("YouTube VERSION:", VERSION);
-        console.log("SEARCH:", SEARCH_URL);
-        console.log("======================================");
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "SEARCH YOUTUBE"
+        );
+
+        console.log(
+            "VERSION:",
+            VERSION
+        );
+
+        console.log(
+            SEARCH_URL
+        );
+
+        console.log(
+            "======================================"
+        );
 
 
         await page.goto(
             SEARCH_URL,
             {
-                waitUntil: "domcontentloaded",
-                timeout: 120000
-            }
-        );
+                waitUntil:
+                    "domcontentloaded",
 
-
-        await sleep(4000);
-
-
-        // =================================================
-        // FIND RELEASE
-        // =================================================
-
-        const links = await getLinks(page);
-
-        const releases = [];
-
-
-        for (const item of links) {
-
-            const combined =
-                `${item.text} ${item.href}`.toLowerCase();
-
-
-            if (
-                !combined.includes(
-                    "/apk/google-inc/youtube/"
-                )
-            ) {
-                continue;
-            }
-
-
-            if (
-                !combined.includes("release")
-            ) {
-                continue;
-            }
-
-
-            if (
-                !combined.includes(
-                    VERSION.toLowerCase()
-                ) &&
-                !combined.includes(
-                    VERSION
-                        .replace(/\./g, "-")
-                        .toLowerCase()
-                )
-            ) {
-                continue;
-            }
-
-
-            if (isBad(combined)) {
-                continue;
-            }
-
-
-            releases.push({
-                type: isBeta(combined)
-                    ? "beta"
-                    : "stable",
-
-                href: item.href
-            });
-
-        }
-
-
-        const unique = [];
-
-        const seen = new Set();
-
-
-        for (const item of releases) {
-
-            if (seen.has(item.href)) {
-                continue;
-            }
-
-            seen.add(item.href);
-
-            unique.push(item);
-
-        }
-
-
-        // =================================================
-        // STABLE FIRST
-        // =================================================
-
-        const stable =
-            unique.filter(
-                x => x.type === "stable"
-            );
-
-
-        const beta =
-            unique.filter(
-                x => x.type === "beta"
-            );
-
-
-        let release;
-
-
-        if (stable.length > 0) {
-
-            release = stable[0];
-
-        } else if (beta.length > 0) {
-
-            release = beta[0];
-
-        } else {
-
-            throw new Error(
-                `Không tìm thấy YouTube ${VERSION} Stable/Beta`
-            );
-
-        }
-
-
-        console.log("");
-        console.log("SELECTED:");
-        console.log(release.type);
-        console.log(release.href);
-
-
-        // =================================================
-        // OPEN RELEASE
-        // =================================================
-
-        await page.goto(
-            release.href,
-            {
-                waitUntil: "domcontentloaded",
-                timeout: 120000
+                timeout:
+                    120000
             }
         );
 
@@ -260,31 +184,38 @@ async function main() {
         await sleep(5000);
 
 
-        // =================================================
-        // FIND APK DOWNLOAD PAGES
-        // =================================================
+        // ==================================================
+        // 2. FIND RELEASE
+        // ==================================================
 
-        const releaseLinks =
-            await getLinks(page);
-
-
-        const apkPages = [];
+        const searchLinks =
+            await links(page);
 
 
-        for (const item of releaseLinks) {
+        const candidates =
+            [];
+
+
+        for (
+            const item
+            of searchLinks
+        ) {
 
             const href =
                 item.href || "";
 
-            const lower =
-                href.toLowerCase();
+
+            const text =
+                item.text || "";
+
 
             const combined =
-                `${item.text} ${href}`.toLowerCase();
+                `${text} ${href}`
+                    .toLowerCase();
 
 
             if (
-                !lower.includes(
+                !href.includes(
                     "/apk/google-inc/youtube/"
                 )
             ) {
@@ -293,21 +224,15 @@ async function main() {
 
 
             if (
-                !lower.includes(
-                    "android-apk-download"
-                )
-            ) {
-                continue;
-            }
-
-
-            if (
-                !lower.includes(
+                !combined.includes(
                     VERSION.toLowerCase()
                 ) &&
-                !lower.includes(
+                !combined.includes(
                     VERSION
-                        .replace(/\./g, "-")
+                        .replace(
+                            /\./g,
+                            "-"
+                        )
                         .toLowerCase()
                 )
             ) {
@@ -315,119 +240,335 @@ async function main() {
             }
 
 
-            if (isBad(combined)) {
-                continue;
-            }
-
-
-            // KHÔNG CHỌN BUNDLE
             if (
-                lower.includes("bundle")
+                !combined.includes(
+                    "release"
+                )
             ) {
                 continue;
             }
 
 
-            apkPages.push({
-                text: item.text,
-                href: item.href
+            if (
+                isBadRelease(combined)
+            ) {
+                continue;
+            }
+
+
+            candidates.push({
+
+                type:
+                    isBeta(combined)
+                        ? "beta"
+                        : "stable",
+
+                href:
+                    href,
+
+                text:
+                    text
+
             });
 
         }
 
 
-        const uniquePages = [];
+        // Remove duplicates
+        const unique =
+            [];
 
-        const pageSeen = new Set();
+
+        const seen =
+            new Set();
 
 
-        for (const item of apkPages) {
+        for (
+            const item
+            of candidates
+        ) {
 
-            if (pageSeen.has(item.href)) {
+            if (
+                seen.has(
+                    item.href
+                )
+            ) {
                 continue;
             }
 
-            pageSeen.add(item.href);
 
-            uniquePages.push(item);
+            seen.add(
+                item.href
+            );
+
+
+            unique.push(
+                item
+            );
 
         }
 
 
         console.log("");
-        console.log("NON-BUNDLE APK PAGES:");
+        console.log(
+            "RELEASE CANDIDATES:"
+        );
 
-        for (const item of uniquePages) {
-            console.log(item.href);
+
+        for (
+            const item
+            of unique
+        ) {
+
+            console.log(
+                `[${item.type}] ${item.href}`
+            );
+
         }
 
 
-        if (uniquePages.length === 0) {
+        // ==================================================
+        // 3. STABLE FIRST
+        // ==================================================
+
+        const stable =
+            unique.filter(
+                x =>
+                    x.type === "stable"
+            );
+
+
+        const beta =
+            unique.filter(
+                x =>
+                    x.type === "beta"
+            );
+
+
+        let release;
+
+
+        if (
+            stable.length
+        ) {
+
+            release =
+                stable[0];
+
+        } else if (
+            beta.length
+        ) {
+
+            release =
+                beta[0];
+
+        } else {
 
             throw new Error(
-                "Không tìm thấy APK non-bundle."
+                `Không tìm thấy YouTube ${VERSION}`
             );
 
-        }
-
-
-        // =================================================
-        // ƯU TIÊN LINK -3-
-        // =================================================
-
-        const versionDash =
-            VERSION.replace(/\./g, "-");
-
-
-        let selectedPage =
-            uniquePages.find(
-                item =>
-                    item.href.includes(
-                        `-${versionDash}-3-android-apk-download`
-                    )
-            );
-
-
-        // Fallback
-        if (!selectedPage) {
-            selectedPage = uniquePages[0];
         }
 
 
         console.log("");
         console.log(
-            "======================================"
+            "SELECTED RELEASE:"
         );
 
         console.log(
-            "SELECTED NODPI APK PAGE:"
+            release.type
         );
 
         console.log(
-            selectedPage.href
-        );
-
-        console.log(
-            "======================================"
+            release.href
         );
 
 
-        // =================================================
-        // OPEN NODPI PAGE
-        // =================================================
+        // ==================================================
+        // 4. OPEN RELEASE
+        // ==================================================
 
         await page.goto(
-            selectedPage.href,
+            release.href,
             {
-                waitUntil: "domcontentloaded",
-                timeout: 120000
+                waitUntil:
+                    "domcontentloaded",
+
+                timeout:
+                    120000
             }
         );
 
 
-        // =================================================
-        // WAIT 20 SECONDS
-        // =================================================
+        await sleep(5000);
+
+
+        // ==================================================
+        // 5. FIND APK DOWNLOAD BUTTON
+        //
+        // KHÔNG CHỌN BUNDLE
+        // ==================================================
+
+        console.log("");
+        console.log(
+            "SEARCHING NORMAL APK..."
+        );
+
+
+        let apkPage =
+            null;
+
+
+        const releasePageLinks =
+            await links(page);
+
+
+        for (
+            const item
+            of releasePageLinks
+        ) {
+
+            const href =
+                item.href || "";
+
+
+            const text =
+                item.text || "";
+
+
+            const combined =
+                `${text} ${href}`
+                    .toLowerCase();
+
+
+            if (
+                !href.includes(
+                    "android-apk-download"
+                )
+            ) {
+                continue;
+            }
+
+
+            // ----------------------------------------------
+            // BỎ BUNDLE
+            // ----------------------------------------------
+
+            if (
+                combined.includes(
+                    "bundle"
+                )
+            ) {
+                continue;
+            }
+
+
+            if (
+                combined.includes(
+                    "splits"
+                )
+            ) {
+                continue;
+            }
+
+
+            // ----------------------------------------------
+            // BỎ SECONDARY
+            // ----------------------------------------------
+
+            if (
+                combined.includes(
+                    "secondary"
+                )
+            ) {
+                continue;
+            }
+
+
+            // ----------------------------------------------
+            // ĐÚNG VERSION
+            // ----------------------------------------------
+
+            if (
+                !combined.includes(
+                    VERSION.toLowerCase()
+                ) &&
+                !combined.includes(
+                    VERSION
+                        .replace(
+                            /\./g,
+                            "-"
+                        )
+                        .toLowerCase()
+                )
+            ) {
+                continue;
+            }
+
+
+            apkPage = {
+
+                text:
+                    text,
+
+                href:
+                    href
+
+            };
+
+
+            break;
+
+        }
+
+
+        if (!apkPage) {
+
+            throw new Error(
+                "Không tìm thấy NORMAL APK download page."
+            );
+
+        }
+
+
+        console.log("");
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "NORMAL APK PAGE:"
+        );
+
+        console.log(
+            apkPage.href
+        );
+
+        console.log(
+            "======================================"
+        );
+
+
+        // ==================================================
+        // 6. OPEN NORMAL APK PAGE
+        // ==================================================
+
+        await page.goto(
+            apkPage.href,
+            {
+                waitUntil:
+                    "domcontentloaded",
+
+                timeout:
+                    120000
+            }
+        );
+
+
+        // ==================================================
+        // 7. WAIT ANTI-ADBLOCK
+        // ==================================================
 
         console.log("");
         console.log(
@@ -452,20 +593,279 @@ async function main() {
 
         console.log("");
         console.log(
-            "Anti-adblock wait completed."
+            "Waiting completed."
         );
 
 
-        // =================================================
-        // WAIT DOWNLOAD APK
-        // =================================================
+        // ==================================================
+        // 8. FIND NODPI
+        // ==================================================
 
+        console.log("");
+        console.log(
+            "SEARCHING NODPI..."
+        );
+
+
+        const bodyText =
+            (
+                await page
+                    .locator("body")
+                    .innerText()
+            )
+            .toLowerCase();
+
+
+        console.log(
+            "Contains nodpi:",
+            bodyText.includes(
+                "nodpi"
+            )
+        );
+
+
+        // --------------------------------------------------
+        // TÌM LINK CHỨA NODPI
+        // --------------------------------------------------
+
+        const variantLinks =
+            await links(page);
+
+
+        let nodpiPage =
+            null;
+
+
+        for (
+            const item
+            of variantLinks
+        ) {
+
+            const href =
+                item.href || "";
+
+
+            const text =
+                item.text || "";
+
+
+            const combined =
+                `${text} ${href}`
+                    .toLowerCase();
+
+
+            if (
+                !combined.includes(
+                    "nodpi"
+                )
+            ) {
+                continue;
+            }
+
+
+            if (
+                !href.includes(
+                    "android-apk-download"
+                )
+            ) {
+                continue;
+            }
+
+
+            if (
+                combined.includes(
+                    "bundle"
+                )
+            ) {
+                continue;
+            }
+
+
+            nodpiPage = {
+
+                text:
+                    text,
+
+                href:
+                    cleanUrl(
+                        href
+                    )
+
+            };
+
+
+            break;
+
+        }
+
+
+        // ==================================================
+        // FALLBACK:
+        // LINK nodpi CÓ THỂ LÀ VARIANT TEXT
+        // ==================================================
+
+        if (!nodpiPage) {
+
+            for (
+                const item
+                of variantLinks
+            ) {
+
+                const href =
+                    item.href || "";
+
+
+                const text =
+                    item.text || "";
+
+
+                const combined =
+                    `${text} ${href}`
+                        .toLowerCase();
+
+
+                if (
+                    !combined.includes(
+                        "nodpi"
+                    )
+                ) {
+                    continue;
+                }
+
+
+                if (
+                    combined.includes(
+                        "bundle"
+                    )
+                ) {
+                    continue;
+                }
+
+
+                nodpiPage = {
+
+                    text:
+                        text,
+
+                    href:
+                        cleanUrl(
+                            href
+                        )
+
+                };
+
+
+                break;
+
+            }
+
+        }
+
+
+        if (!nodpiPage) {
+
+            console.log("");
+            console.log(
+                "======================================"
+            );
+
+            console.log(
+                "NODPI NOT FOUND"
+            );
+
+            console.log(
+                "======================================"
+            );
+
+
+            console.log(
+                (
+                    await page
+                        .locator("body")
+                        .innerText()
+                )
+                .substring(
+                    0,
+                    8000
+                )
+            );
+
+
+            throw new Error(
+                `Không tìm thấy nodpi cho ${VERSION}`
+            );
+
+        }
+
+
+        console.log("");
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "NODPI PAGE:"
+        );
+
+        console.log(
+            nodpiPage.href
+        );
+
+        console.log(
+            "======================================"
+        );
+
+
+        // ==================================================
+        // 9. OPEN NODPI
+        // ==================================================
+
+        await page.goto(
+            nodpiPage.href,
+            {
+                waitUntil:
+                    "domcontentloaded",
+
+                timeout:
+                    120000
+            }
+        );
+
+
+        // ==================================================
+        // 10. WAIT 20 SEC AGAIN
+        // ==================================================
+
+        console.log("");
         console.log(
             "Waiting for DOWNLOAD APK..."
         );
 
 
-        let downloadButton = null;
+        for (
+            let i = 20;
+            i > 0;
+            i--
+        ) {
+
+            process.stdout.write(
+                `\rWaiting ${i}s...`
+            );
+
+            await sleep(1000);
+
+        }
+
+
+        console.log("");
+
+
+        // ==================================================
+        // 11. FIND DOWNLOAD APK
+        // ==================================================
+
+        let downloadButton =
+            null;
 
 
         for (
@@ -474,7 +874,6 @@ async function main() {
             attempt++
         ) {
 
-            // Exact
             const exact =
                 page.getByText(
                     "DOWNLOAD APK",
@@ -496,7 +895,6 @@ async function main() {
             }
 
 
-            // Regex
             const regex =
                 page.getByText(
                     /DOWNLOAD\s+APK/i
@@ -519,15 +917,26 @@ async function main() {
 
                 const text =
                     (
-                        await element.innerText()
+                        await element
+                            .innerText()
                     )
                     .trim()
                     .toLowerCase();
 
 
                 if (
-                    text.includes("bundle") ||
-                    text.includes("splits")
+                    text.includes(
+                        "bundle"
+                    )
+                ) {
+                    continue;
+                }
+
+
+                if (
+                    text.includes(
+                        "splits"
+                    )
                 ) {
                     continue;
                 }
@@ -541,7 +950,9 @@ async function main() {
             }
 
 
-            if (downloadButton) {
+            if (
+                downloadButton
+            ) {
                 break;
             }
 
@@ -553,17 +964,21 @@ async function main() {
 
         if (!downloadButton) {
 
-            const body =
-                await page.locator(
-                    "body"
-                ).innerText();
-
-
-            console.log(body.substring(0, 5000));
+            console.log(
+                (
+                    await page
+                        .locator("body")
+                        .innerText()
+                )
+                .substring(
+                    0,
+                    8000
+                )
+            );
 
 
             throw new Error(
-                "Không tìm thấy element DOWNLOAD APK."
+                "Không tìm thấy DOWNLOAD APK."
             );
 
         }
@@ -583,15 +998,16 @@ async function main() {
         );
 
 
-        // =================================================
-        // CLICK DOWNLOAD
-        // =================================================
+        // ==================================================
+        // 12. CLICK DOWNLOAD APK
+        // ==================================================
 
         const downloadPromise =
             page.waitForEvent(
                 "download",
                 {
-                    timeout: 180000
+                    timeout:
+                        180000
                 }
             );
 
@@ -609,12 +1025,22 @@ async function main() {
             await downloadPromise;
 
 
-        // =================================================
-        // SAVE
-        // =================================================
+        // ==================================================
+        // 13. SAVE
+        // ==================================================
 
         const filename =
             `com.google.android.youtube-${VERSION}-all.apk`;
+
+
+        console.log("");
+        console.log(
+            "Saving:"
+        );
+
+        console.log(
+            filename
+        );
 
 
         await download.saveAs(
@@ -622,19 +1048,39 @@ async function main() {
         );
 
 
-        // =================================================
-        // VERIFY
-        // =================================================
+        // ==================================================
+        // 14. VERIFY
+        // ==================================================
 
-        if (!fs.existsSync(filename)) {
+        if (
+            !fs.existsSync(
+                filename
+            )
+        ) {
+
             throw new Error(
-                "APK không tồn tại."
+                "APK download failed."
             );
+
         }
 
 
         const size =
-            fs.statSync(filename).size;
+            fs.statSync(
+                filename
+            ).size;
+
+
+        if (
+            size <
+            10 * 1024 * 1024
+        ) {
+
+            throw new Error(
+                "Downloaded file is too small."
+            );
+
+        }
 
 
         console.log("");
@@ -643,7 +1089,7 @@ async function main() {
         );
 
         console.log(
-            "APK DOWNLOADED"
+            "SUCCESS"
         );
 
         console.log(
@@ -654,7 +1100,9 @@ async function main() {
         console.log(
             "SIZE:",
             (
-                size / 1024 / 1024
+                size /
+                1024 /
+                1024
             ).toFixed(2),
             "MB"
         );
@@ -669,39 +1117,6 @@ async function main() {
         );
 
 
-        if (
-            size <
-            10 * 1024 * 1024
-        ) {
-
-            throw new Error(
-                "APK quá nhỏ."
-            );
-
-        }
-
-
-        // =================================================
-        // OUTPUT
-        // =================================================
-
-        if (
-            process.env.GITHUB_OUTPUT
-        ) {
-
-            fs.appendFileSync(
-                process.env.GITHUB_OUTPUT,
-                `release_type=${release.type}\n`
-            );
-
-            fs.appendFileSync(
-                process.env.GITHUB_OUTPUT,
-                `download_page=${selectedPage.href}\n`
-            );
-
-        }
-
-
     } finally {
 
         await browser.close();
@@ -711,22 +1126,24 @@ async function main() {
 }
 
 
-main().catch(error => {
+main().catch(
+    error => {
 
-    console.error("");
-    console.error(
-        "======================================"
-    );
+        console.error("");
+        console.error(
+            "======================================"
+        );
 
-    console.error(
-        "ERROR:",
-        error.message
-    );
+        console.error(
+            "ERROR:",
+            error.message
+        );
 
-    console.error(
-        "======================================"
-    );
+        console.error(
+            "======================================"
+        );
 
-    process.exit(1);
+        process.exit(1);
 
-});
+    }
+);
