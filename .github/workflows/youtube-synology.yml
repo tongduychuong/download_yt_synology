@@ -1,180 +1,3 @@
-name: Download YouTube APK
-
-on:
-  workflow_dispatch:
-
-  schedule:
-    - cron: "0 2 * * *"
-
-permissions:
-  contents: write
-
-jobs:
-
-  download:
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      # ================================================
-      # CHECKOUT
-      # ================================================
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-
-      # ================================================
-      # VERSION
-      # ================================================
-
-      - name: Read version
-        shell: bash
-        run: |
-
-          set -e
-
-          if [ ! -f version.txt ]; then
-            echo "ERROR: Không tìm thấy version.txt"
-            exit 1
-          fi
-
-          VERSION="$(
-            tr -d '\r\n' < version.txt |
-            xargs
-          )"
-
-          if [ -z "$VERSION" ]; then
-            echo "ERROR: version.txt rỗng"
-            exit 1
-          fi
-
-          echo "VERSION=$VERSION"
-
-          echo "VERSION=$VERSION" \
-            >> "$GITHUB_ENV"
-
-
-      # ================================================
-      # NODE
-      # ================================================
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-
-      # ================================================
-      # PLAYWRIGHT
-      # ================================================
-
-      - name: Install Playwright
-        shell: bash
-        run: |
-
-          set -e
-
-          npm init -y
-
-          npm install playwright
-
-          npx playwright install chromium
-
-          npx playwright install-deps chromium
-
-
-      # ================================================
-      # DOWNLOAD APK
-      # ================================================
-
-      - name: Download YouTube APK
-        shell: bash
-        env:
-          VERSION: ${{ env.VERSION }}
-        run: |
-
-          set -e
-
-          node scripts/apkmirror.js
-
-          APK="com.google.android.youtube-${VERSION}-all.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK không tồn tại"
-            exit 1
-          fi
-
-          echo "APK:"
-          ls -lh "$APK"
-
-
-      # ================================================
-      # CHECK APK
-      # ================================================
-
-      - name: Verify APK
-        shell: bash
-        env:
-          VERSION: ${{ env.VERSION }}
-        run: |
-
-          set -e
-
-          APK="com.google.android.youtube-${VERSION}-all.apk"
-
-          SIZE=$(stat -c%s "$APK")
-
-          echo "SIZE: $SIZE"
-
-          if [ "$SIZE" -lt 10485760 ]; then
-            echo "ERROR: APK quá nhỏ"
-            exit 1
-          fi
-
-
-      # ================================================
-      # CREATE RELEASE
-      # ================================================
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ env.VERSION }}
-        shell: bash
-        run: |
-
-          set -e
-
-          APK="com.google.android.youtube-${VERSION}-all.apk"
-
-          TAG="youtube-${VERSION}"
-
-          TITLE="YouTube ${VERSION}"
-
-          echo "TAG:"
-          echo "$TAG"
-
-          # Nếu release đã tồn tại thì xóa
-          if gh release view "$TAG" >/dev/null 2>&1; then
-
-            echo "Release already exists."
-
-            gh release delete \
-              "$TAG" \
-              --yes
-
-          fi
-
-          # Tạo release
-          gh release create \
-            "$TAG" \
-            "$APK" \
-            --title "$TITLE" \
-            --notes "YouTube ${VERSION} APK"
-
-
       # ================================================
       # SHOW RELEASE
       # ================================================
@@ -191,3 +14,99 @@ jobs:
           TAG="youtube-${VERSION}"
 
           gh release view "$TAG"
+
+
+      # ================================================
+      # CLEANUP OLD RELEASES + TAGS + WORKFLOWS
+      # ================================================
+
+      - name: Cleanup old releases and workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+
+          set -e
+
+          echo "================================"
+          echo "KEEP 2 NEWEST RELEASES"
+          echo "================================"
+
+          # Lấy release theo thời gian tạo, mới nhất trước
+          RELEASES=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[].id')
+
+          COUNT=0
+
+          for RELEASE_ID in $RELEASES; do
+
+            COUNT=$((COUNT + 1))
+
+            if [ "$COUNT" -le 2 ]; then
+
+              echo "KEEP RELEASE ID: $RELEASE_ID"
+
+            else
+
+              TAG=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+                --jq '.tag_name')
+
+              echo "DELETE RELEASE: $RELEASE_ID"
+              echo "DELETE TAG: $TAG"
+
+              # Xóa release
+              gh api \
+                --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+
+              # Xóa tag
+              gh api \
+                --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+                || true
+
+            fi
+
+          done
+
+
+          echo ""
+          echo "================================"
+          echo "KEEP 3 NEWEST WORKFLOW RUNS"
+          echo "================================"
+
+          # Lấy tất cả workflow runs
+          RUNS=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+            --jq '.workflow_runs[].id')
+
+          COUNT=0
+
+          for RUN_ID in $RUNS; do
+
+            COUNT=$((COUNT + 1))
+
+            if [ "$COUNT" -le 3 ]; then
+
+              echo "KEEP WORKFLOW RUN: $RUN_ID"
+
+            else
+
+              echo "DELETE WORKFLOW RUN: $RUN_ID"
+
+              gh api \
+                --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" \
+                || true
+
+            fi
+
+          done
+
+
+          echo ""
+          echo "================================"
+          echo "CLEANUP COMPLETED"
+          echo "================================"
