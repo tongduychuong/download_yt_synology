@@ -10,6 +10,7 @@ if (!VERSION) {
 }
 
 const BASE = "https://www.apkmirror.com";
+
 const V = VERSION.replace(/\./g, "-");
 
 const USER_AGENT =
@@ -18,6 +19,10 @@ const USER_AGENT =
     "(KHTML, like Gecko) " +
     "Chrome/131.0.0.0 Mobile Safari/537.36";
 
+
+// ==================================================
+// SLEEP
+// ==================================================
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -32,7 +37,7 @@ function get(url) {
 
     return new Promise((resolve, reject) => {
 
-        const request = https.get(
+        const req = https.get(
             url,
             {
                 headers: {
@@ -43,35 +48,27 @@ function get(url) {
                         "en-US,en;q=0.9"
                 }
             },
-            response => {
+            res => {
 
-                const status =
-                    response.statusCode;
+                const status = res.statusCode;
 
-                // ------------------------------------------
-                // REDIRECT
-                // ------------------------------------------
-
+                // Redirect
                 if (
-                    [301, 302, 303, 307, 308]
-                        .includes(status)
+                    [301, 302, 303, 307, 308].includes(status)
                 ) {
 
                     const location =
-                        response.headers.location;
+                        res.headers.location;
 
-                    response.resume();
+                    res.resume();
 
                     if (!location) {
-
                         reject(
                             new Error(
                                 `HTTP ${status} without Location`
                             )
                         );
-
                         return;
-
                     }
 
                     const next =
@@ -85,30 +82,27 @@ function get(url) {
                         .catch(reject);
 
                     return;
-
                 }
 
+                let body = "";
 
-                let data = "";
+                res.setEncoding("utf8");
 
-                response.setEncoding("utf8");
-
-                response.on(
+                res.on(
                     "data",
                     chunk => {
-                        data += chunk;
+                        body += chunk;
                     }
                 );
 
-                response.on(
+                res.on(
                     "end",
                     () => {
 
                         resolve({
                             status,
-                            body: data,
-                            headers:
-                                response.headers,
+                            body,
+                            headers: res.headers,
                             url
                         });
 
@@ -119,21 +113,19 @@ function get(url) {
         );
 
 
-        request.setTimeout(
+        req.setTimeout(
             120000,
             () => {
-
-                request.destroy(
+                req.destroy(
                     new Error(
-                        "HTTP timeout"
+                        "Request timeout"
                     )
                 );
-
             }
         );
 
 
-        request.on(
+        req.on(
             "error",
             reject
         );
@@ -157,7 +149,7 @@ function download(url, filename) {
             );
 
 
-        const request =
+        const req =
             https.get(
                 url,
                 {
@@ -168,25 +160,22 @@ function download(url, filename) {
                             "*/*"
                     }
                 },
-                response => {
+                res => {
 
                     const status =
-                        response.statusCode;
+                        res.statusCode;
 
 
-                    // --------------------------------------
-                    // REDIRECT
-                    // --------------------------------------
-
+                    // Redirect
                     if (
                         [301, 302, 303, 307, 308]
                             .includes(status)
                     ) {
 
                         const location =
-                            response.headers.location;
+                            res.headers.location;
 
-                        response.resume();
+                        res.resume();
 
                         file.close();
 
@@ -236,7 +225,7 @@ function download(url, filename) {
 
                     if (status !== 200) {
 
-                        response.resume();
+                        res.resume();
 
                         file.close();
 
@@ -261,7 +250,7 @@ function download(url, filename) {
                     }
 
 
-                    response.pipe(file);
+                    res.pipe(file);
 
 
                     file.on(
@@ -279,11 +268,11 @@ function download(url, filename) {
             );
 
 
-        request.setTimeout(
+        req.setTimeout(
             180000,
             () => {
 
-                request.destroy(
+                req.destroy(
                     new Error(
                         "Download timeout"
                     )
@@ -293,7 +282,7 @@ function download(url, filename) {
         );
 
 
-        request.on(
+        req.on(
             "error",
             error => {
 
@@ -348,31 +337,20 @@ function cleanUrl(url) {
 
 function absoluteUrl(url, base) {
 
-    url =
-        cleanUrl(url);
+    url = cleanUrl(url);
 
     if (
-        url.startsWith(
-            "http://"
-        ) ||
-        url.startsWith(
-            "https://"
-        )
+        url.startsWith("http://") ||
+        url.startsWith("https://")
     ) {
-
         return url;
-
     }
-
 
     if (
         url.startsWith("//")
     ) {
-
         return "https:" + url;
-
     }
-
 
     return new URL(
         url,
@@ -383,85 +361,78 @@ function absoluteUrl(url, base) {
 
 
 // ==================================================
-// FIND DOWNLOAD BUTTON
+// FIND downloadButton
+//
+// Giống build.sh:
+//
+// grep -m1 'downloadButton'
+// tr ' ' '\n'
+// grep -m1 'href='
 // ==================================================
 
 function findDownloadButton(html) {
 
-    // ----------------------------------------------
-    // APKMirror downloadButton
-    // ----------------------------------------------
-
-    const patterns = [
-
-        /<a[^>]*class=["'][^"']*downloadButton[^"']*["'][^>]*href=["']([^"']+)["']/i,
-
-        /<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*downloadButton[^"']*["']/i,
-
-        /downloadButton[\s\S]{0,2000}?href=["']([^"']+)["']/i
-
-    ];
+    const match =
+        html.match(
+            /<[^>]*class=["'][^"']*downloadButton[^"']*["'][^>]*>/i
+        );
 
 
-    for (
-        const pattern
-        of patterns
-    ) {
-
-        const match =
-            html.match(
-                pattern
-            );
-
-
-        if (
-            match &&
-            match[1]
-        ) {
-
-            return cleanUrl(
-                match[1]
-            );
-
-        }
-
+    if (!match) {
+        return null;
     }
 
 
-    return null;
+    const tag =
+        match[0];
+
+
+    const href =
+        tag.match(
+            /href=["']([^"']+)["']/i
+        );
+
+
+    if (
+        !href ||
+        !href[1]
+    ) {
+        return null;
+    }
+
+
+    return href[1];
 
 }
 
 
 // ==================================================
-// FIND HERE
+// FIND "here"
+//
+// Giống build.sh:
+//
+// grep -m1 '>here<'
 // ==================================================
 
 function findHere(html) {
 
     const patterns = [
 
-        // <a href="...">here</a>
-        /<a[^>]+href=["']([^"']+)["'][^>]*>\s*here\s*<\/a>/i,
+        /<a[^>]*href=["']([^"']+)["'][^>]*>\s*here\s*<\/a>/i,
 
-        // <a href="..."><span>here</span></a>
-        /<a[^>]+href=["']([^"']+)["'][^>]*>[\s\S]{0,200}?\bhere\b[\s\S]{0,200}?<\/a>/i,
+        /<a[^>]*href=["']([^"']+)["'][^>]*>[\s\S]{0,300}?<[^>]*>\s*here\s*<\/[^>]*>[\s\S]{0,100}?<\/a>/i,
 
-        // href before >here<
-        /href=["']([^"']+)["'][^>]*>[\s]*here[\s]*</i
+        /href=["']([^"']+)["'][^>]*>\s*here\s*</i
 
     ];
 
 
     for (
-        const pattern
-        of patterns
+        const pattern of patterns
     ) {
 
         const match =
-            html.match(
-                pattern
-            );
+            html.match(pattern);
 
 
         if (
@@ -469,9 +440,7 @@ function findHere(html) {
             match[1]
         ) {
 
-            return cleanUrl(
-                match[1]
-            );
+            return match[1];
 
         }
 
@@ -484,7 +453,9 @@ function findHere(html) {
 
 
 // ==================================================
-// CHECK FILE
+// CHECK APK / BUNDLE
+//
+// Giống build.sh
 // ==================================================
 
 function checkFile(filename) {
@@ -499,16 +470,12 @@ function checkFile(filename) {
                     filename
                 ],
                 {
-                    encoding:
-                        "utf8"
+                    encoding: "utf8"
                 }
             );
 
 
-        // ----------------------------------------------
         // Bundle / APKS
-        // ----------------------------------------------
-
         if (
             output.includes(
                 "base.apk"
@@ -520,10 +487,7 @@ function checkFile(filename) {
         }
 
 
-        // ----------------------------------------------
         // Normal APK
-        // ----------------------------------------------
-
         if (
             output.includes(
                 "AndroidManifest.xml"
@@ -547,27 +511,21 @@ function checkFile(filename) {
 
 
 // ==================================================
-// 4 CANDIDATES
+// DOWNLOAD ONE CANDIDATE
 // ==================================================
 
-const candidates = [
+async function downloadCandidate(
+    relativePath,
+    number
+) {
 
-    `youtube-${V}-2-android-apk-download`,
-
-    `youtube-${V}-android-apk-download`,
-
-    `youtube-${V}-3-android-apk-download`,
-
-    `youtube-${V}-4-android-apk-download`
-
-];
+    const firstUrl =
+        `${BASE}/apk/${relativePath}`;
 
 
-// ==================================================
-// MAIN
-// ==================================================
+    const temp =
+        `YouTube${number}.zip`;
 
-async function main() {
 
     console.log("");
     console.log(
@@ -575,12 +533,11 @@ async function main() {
     );
 
     console.log(
-        "YouTube APKMirror Downloader"
+        `YOUTUBE CANDIDATE ${number}`
     );
 
     console.log(
-        "VERSION:",
-        VERSION
+        firstUrl
     );
 
     console.log(
@@ -588,28 +545,373 @@ async function main() {
     );
 
 
-    // ==================================================
-    // TRY 4 LINKS
-    // ==================================================
+    try {
 
-    for (
-        let i = 0;
-        i < candidates.length;
-        i++
-    ) {
+        // ==================================================
+        // FIRST PAGE
+        // ==================================================
 
-        const candidate =
-            candidates[i];
+        let first =
+            await get(
+                firstUrl
+            );
 
 
-        const page =
-            `${BASE}/apk/google-inc/youtube/` +
-            `youtube-${V}-release/` +
-            `${candidate}/`;
+        console.log(
+            "HTTP:",
+            first.status
+        );
 
 
-        const temp =
-            `youtube_${i + 1}.tmp`;
+        if (
+            first.status !== 200
+        ) {
+
+            throw new Error(
+                `HTTP ${first.status}`
+            );
+
+        }
+
+
+        // ==================================================
+        // CHỜ 15 GIÂY
+        //
+        // Quan trọng theo yêu cầu của bạn
+        // ==================================================
+
+        console.log(
+            "Waiting 15 seconds for downloadButton..."
+        );
+
+
+        for (
+            let sec = 15;
+            sec > 0;
+            sec--
+        ) {
+
+            process.stdout.write(
+                `\rWaiting ${sec}s...`
+            );
+
+            await sleep(1000);
+
+        }
+
+        console.log("");
+
+
+        // ==================================================
+        // TÌM DOWNLOAD BUTTON
+        // ==================================================
+
+        let button =
+            findDownloadButton(
+                first.body
+            );
+
+
+        // ==================================================
+        // RETRY
+        // ==================================================
+
+        if (!button) {
+
+            console.log(
+                "downloadButton chưa có."
+            );
+
+            console.log(
+                "Retry..."
+            );
+
+
+            for (
+                let retry = 0;
+                retry < 15;
+                retry++
+            ) {
+
+                await sleep(1000);
+
+
+                first =
+                    await get(
+                        firstUrl
+                    );
+
+
+                button =
+                    findDownloadButton(
+                        first.body
+                    );
+
+
+                if (button) {
+
+                    console.log(
+                        "downloadButton FOUND."
+                    );
+
+                    break;
+
+                }
+
+            }
+
+        }
+
+
+        if (!button) {
+
+            throw new Error(
+                "Không tìm thấy downloadButton"
+            );
+
+        }
+
+
+        const secondUrl =
+            absoluteUrl(
+                button,
+                firstUrl
+            );
+
+
+        console.log(
+            "downloadButton:"
+        );
+
+        console.log(
+            secondUrl
+        );
+
+
+        // ==================================================
+        // SECOND PAGE
+        // ==================================================
+
+        let second =
+            await get(
+                secondUrl
+            );
+
+
+        if (
+            second.status !== 200
+        ) {
+
+            throw new Error(
+                `Download page HTTP ${second.status}`
+            );
+
+        }
+
+
+        // ==================================================
+        // CHỜ 15 GIÂY
+        // ==================================================
+
+        console.log(
+            "Waiting 15 seconds for 'here'..."
+        );
+
+
+        for (
+            let sec = 15;
+            sec > 0;
+            sec--
+        ) {
+
+            process.stdout.write(
+                `\rWaiting ${sec}s...`
+            );
+
+            await sleep(1000);
+
+        }
+
+        console.log("");
+
+
+        // ==================================================
+        // FIND HERE
+        // ==================================================
+
+        let realUrl =
+            findHere(
+                second.body
+            );
+
+
+        // ==================================================
+        // RETRY HERE
+        // ==================================================
+
+        if (!realUrl) {
+
+            console.log(
+                "'here' chưa có."
+            );
+
+            for (
+                let retry = 0;
+                retry < 15;
+                retry++
+            ) {
+
+                await sleep(1000);
+
+
+                second =
+                    await get(
+                        secondUrl
+                    );
+
+
+                realUrl =
+                    findHere(
+                        second.body
+                    );
+
+
+                if (realUrl) {
+
+                    console.log(
+                        "'here' FOUND."
+                    );
+
+                    break;
+
+                }
+
+            }
+
+        }
+
+
+        if (!realUrl) {
+
+            throw new Error(
+                "Không tìm thấy link here"
+            );
+
+        }
+
+
+        realUrl =
+            absoluteUrl(
+                realUrl,
+                secondUrl
+            );
+
+
+        console.log("");
+        console.log(
+            "REAL DOWNLOAD:"
+        );
+
+        console.log(
+            realUrl
+        );
+
+
+        // ==================================================
+        // DOWNLOAD
+        // ==================================================
+
+        await download(
+            realUrl,
+            temp
+        );
+
+
+        // ==================================================
+        // CHECK
+        // ==================================================
+
+        const type =
+            checkFile(
+                temp
+            );
+
+
+        console.log(
+            "TYPE:",
+            type
+        );
+
+
+        if (
+            type === "bundle"
+        ) {
+
+            console.log(
+                "Bundle detected - skip."
+            );
+
+            fs.unlinkSync(
+                temp
+            );
+
+            return null;
+
+        }
+
+
+        if (
+            type !== "apk"
+        ) {
+
+            console.log(
+                "Invalid APK file."
+            );
+
+            if (
+                fs.existsSync(
+                    temp
+                )
+            ) {
+                fs.unlinkSync(
+                    temp
+                );
+            }
+
+            return null;
+
+        }
+
+
+        // ==================================================
+        // NORMAL APK
+        // ==================================================
+
+        const finalName =
+            `com.google.android.youtube-${VERSION}-all.apk`;
+
+
+        if (
+            fs.existsSync(
+                finalName
+            )
+        ) {
+            fs.unlinkSync(
+                finalName
+            );
+        }
+
+
+        fs.renameSync(
+            temp,
+            finalName
+        );
+
+
+        const size =
+            fs.statSync(
+                finalName
+            ).size;
 
 
         console.log("");
@@ -618,523 +920,130 @@ async function main() {
         );
 
         console.log(
-            `CHECK LINK ${i + 1}/4`
+            "NORMAL APK FOUND"
         );
 
         console.log(
-            page
+            "FILE:",
+            finalName
+        );
+
+        console.log(
+            "SIZE:",
+            (
+                size /
+                1024 /
+                1024
+            ).toFixed(2),
+            "MB"
         );
 
         console.log(
             "======================================"
-
-
         );
 
 
-        try {
+        return finalName;
 
-            // ==================================================
-            // STEP 1
-            // OPEN CANDIDATE
-            // ==================================================
+    } catch (error) {
 
-            const first =
-                await get(page);
+        console.log(
+            `Candidate ${number} failed:`
+        );
 
+        console.log(
+            error.message
+        );
 
-            console.log(
-                "HTTP:",
-                first.status
-            );
 
+        if (
+            fs.existsSync(
+                temp
+            )
+        ) {
 
-            if (
-                first.status !== 200
-            ) {
-
-                console.log(
-                    "Candidate không tồn tại."
-                );
-
-                continue;
-
-            }
-
-
-            // ==================================================
-            // STEP 2
-            // CHỜ ĐỦ 15 GIÂY
-            // ==================================================
-
-            console.log("");
-            console.log(
-                "Waiting 15 seconds..."
-            );
-
-
-            for (
-                let sec = 15;
-                sec > 0;
-                sec--
-            ) {
-
-                process.stdout.write(
-                    `\rWaiting ${sec}s...`
-                );
-
-                await sleep(1000);
-
-            }
-
-
-            console.log("");
-            console.log(
-                "15 seconds completed."
-            );
-
-
-            // ==================================================
-            // STEP 3
-            // TÌM DOWNLOAD BUTTON
-            // ==================================================
-
-            console.log(
-                "Searching downloadButton..."
-            );
-
-
-            let downloadButton =
-                findDownloadButton(
-                    first.body
-                );
-
-
-            // ==================================================
-            // STEP 4
-            // RETRY THÊM 10 GIÂY
-            // ==================================================
-
-            if (
-                !downloadButton
-            ) {
-
-                console.log(
-                    "downloadButton chưa xuất hiện."
-                );
-
-                console.log(
-                    "Retrying..."
-                );
-
-
-                for (
-                    let retry = 0;
-                    retry < 10;
-                    retry++
-                ) {
-
-                    await sleep(1000);
-
-
-                    const retryPage =
-                        await get(page);
-
-
-                    downloadButton =
-                        findDownloadButton(
-                            retryPage.body
-                        );
-
-
-                    if (
-                        downloadButton
-                    ) {
-
-                        console.log(
-                            "downloadButton FOUND."
-                        );
-
-                        break;
-
-                    }
-
-                }
-
-            }
-
-
-            // ==================================================
-            // STEP 5
-            // KHÔNG CÓ BUTTON → LINK KHÁC
-            // ==================================================
-
-            if (
-                !downloadButton
-            ) {
-
-                console.log(
-                    "Không tìm thấy downloadButton."
-                );
-
-                console.log(
-                    "Chuyển sang link tiếp theo."
-                );
-
-                continue;
-
-            }
-
-
-            const downloadPage =
-                absoluteUrl(
-                    downloadButton,
-                    page
-                );
-
-
-            console.log("");
-            console.log(
-                "DOWNLOAD BUTTON:"
-            );
-
-            console.log(
-                downloadPage
-            );
-
-
-            // ==================================================
-            // STEP 6
-            // OPEN DOWNLOAD PAGE
-            // ==================================================
-
-            const second =
-                await get(
-                    downloadPage
-                );
-
-
-            console.log(
-                "DOWNLOAD PAGE HTTP:",
-                second.status
-            );
-
-
-            if (
-                second.status !== 200
-            ) {
-
-                console.log(
-                    "Download page lỗi."
-                );
-
-                continue;
-
-            }
-
-
-            // ==================================================
-            // STEP 7
-            // CHỜ 15 GIÂY
-            // ==================================================
-
-            console.log("");
-            console.log(
-                "Waiting another 15 seconds..."
-            );
-
-
-            for (
-                let sec = 15;
-                sec > 0;
-                sec--
-            ) {
-
-                process.stdout.write(
-                    `\rWaiting ${sec}s...`
-                );
-
-                await sleep(1000);
-
-            }
-
-
-            console.log("");
-
-
-            // ==================================================
-            // STEP 8
-            // FIND HERE
-            // ==================================================
-
-            let realUrl =
-                findHere(
-                    second.body
-                );
-
-
-            // ==================================================
-            // RETRY HERE
-            // ==================================================
-
-            if (
-                !realUrl
-            ) {
-
-                console.log(
-                    "'here' chưa xuất hiện."
-                );
-
-                console.log(
-                    "Retrying..."
-                );
-
-
-                for (
-                    let retry = 0;
-                    retry < 10;
-                    retry++
-                ) {
-
-                    await sleep(1000);
-
-
-                    const retryPage =
-                        await get(
-                            downloadPage
-                        );
-
-
-                    realUrl =
-                        findHere(
-                            retryPage.body
-                        );
-
-
-                    if (
-                        realUrl
-                    ) {
-
-                        console.log(
-                            "'here' FOUND."
-                        );
-
-                        break;
-
-                    }
-
-                }
-
-            }
-
-
-            if (
-                !realUrl
-            ) {
-
-                console.log(
-                    "Không tìm thấy link 'here'."
-                );
-
-                continue;
-
-            }
-
-
-            realUrl =
-                absoluteUrl(
-                    realUrl,
-                    downloadPage
-                );
-
-
-            console.log("");
-            console.log(
-                "REAL DOWNLOAD URL:"
-            );
-
-            console.log(
-                realUrl
-            );
-
-
-            // ==================================================
-            // STEP 9
-            // DOWNLOAD
-            // ==================================================
-
-            console.log("");
-            console.log(
-                "Downloading..."
-            );
-
-
-            await download(
-                realUrl,
+            fs.unlinkSync(
                 temp
             );
 
-
-            // ==================================================
-            // STEP 10
-            // CHECK FILE
-            // ==================================================
-
-            const type =
-                checkFile(
-                    temp
-                );
+        }
 
 
-            console.log(
-                "Detected:",
-                type
+        return null;
+
+    }
+
+}
+
+
+// ==================================================
+// MAIN
+// ==================================================
+
+async function main() {
+
+    // Giống build.sh dòng 124-127
+    const candidates = [
+
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-2-android-apk-download/`,
+
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-android-apk-download/`,
+
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-3-android-apk-download/`,
+
+        `google-inc/youtube/youtube-${V}-release/youtube-${V}-4-android-apk-download/`
+
+    ];
+
+
+    console.log("");
+    console.log(
+        "======================================"
+    );
+
+    console.log(
+        "YouTube APKMirror"
+    );
+
+    console.log(
+        "VERSION:",
+        VERSION
+    );
+
+    console.log(
+        "4 candidates"
+    );
+
+    console.log(
+        "======================================"
+    );
+
+
+    // ==================================================
+    // THỬ 4 LINK TUẦN TỰ
+    // ==================================================
+
+    for (
+        let i = 0;
+        i < candidates.length;
+        i++
+    ) {
+
+        const result =
+            await downloadCandidate(
+                candidates[i],
+                i + 1
             );
 
 
-            // ==================================================
-            // BUNDLE → SKIP
-            // ==================================================
-
-            if (
-                type === "bundle"
-            ) {
-
-                console.log(
-                    "BUNDLE detected."
-                );
-
-                console.log(
-                    "Skip this candidate."
-                );
-
-
-                fs.unlinkSync(
-                    temp
-                );
-
-
-                continue;
-
-            }
-
-
-            // ==================================================
-            // APK → SUCCESS
-            // ==================================================
-
-            if (
-                type === "apk"
-            ) {
-
-                const filename =
-                    `com.google.android.youtube-${VERSION}-all.apk`;
-
-
-                if (
-                    fs.existsSync(
-                        filename
-                    )
-                ) {
-
-                    fs.unlinkSync(
-                        filename
-                    );
-
-                }
-
-
-                fs.renameSync(
-                    temp,
-                    filename
-                );
-
-
-                const size =
-                    fs.statSync(
-                        filename
-                    ).size;
-
-
-                console.log("");
-                console.log(
-                    "======================================"
-                );
-
-                console.log(
-                    "NORMAL APK FOUND"
-                );
-
-                console.log(
-                    "FILE:",
-                    filename
-                );
-
-                console.log(
-                    "SIZE:",
-                    (
-                        size /
-                        1024 /
-                        1024
-                    ).toFixed(2),
-                    "MB"
-                );
-
-                console.log(
-                    "======================================"
-                );
-
-
-                return;
-
-            }
-
-
-            // ==================================================
-            // INVALID
-            // ==================================================
-
-            console.log(
-                "Invalid file."
-            );
-
-
-            if (
-                fs.existsSync(
-                    temp
-                )
-            ) {
-
-                fs.unlinkSync(
-                    temp
-                );
-
-            }
-
-
-        } catch (error) {
+        if (result) {
 
             console.log("");
             console.log(
-                `LINK ${i + 1} ERROR:`
+                "DOWNLOAD SUCCESS"
             );
 
-            console.log(
-                error.message
-            );
-
-
-            if (
-                fs.existsSync(
-                    temp
-                )
-            ) {
-
-                fs.unlinkSync(
-                    temp
-                );
-
-            }
+            return;
 
         }
 
