@@ -1,0 +1,53 @@
+name: Get Morphe Target YouTube Version Auto
+
+on:
+  workflow_dispatch: # Cho phép bấm chạy thủ công
+  schedule:
+    - cron: '0 0 * * *' # Tự động chạy mỗi ngày vào lúc 00:00 UTC
+
+jobs:
+  get-and-save-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Fetch Latest Morphe CLI and Patches
+        run: |
+          # Lấy URL bản mới nhất từ GitHub Release
+          CLI_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | grep "browser_download_url" | grep "\.jar" | cut -d '"' -f 4)
+          PATCHES_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | grep "browser_download_url" | grep "\.jar" | cut -d '"' -f 4)
+
+          curl -sL $CLI_URL -o morphe-cli.jar
+          curl -sL $PATCHES_URL -o morphe-patches.jar
+
+      - name: Extract Target Version and Save to File
+        id: extract_version
+        run: |
+          # Trích xuất phiên bản khuyến nghị cho com.google.android.youtube
+          TARGET_VERSION=$(java -jar morphe-cli.jar list-patches -m morphe-patches.jar -a com.google.android.youtube | grep -i "recommended" | awk '{print $NF}' | head -n 1)
+
+          # Dự phòng: Nếu không có chữ "recommended", lấy phiên bản hỗ trợ cao nhất
+          if [ -z "$TARGET_VERSION" ]; then
+            TARGET_VERSION=$(java -jar morphe-cli.jar list-patches -m morphe-patches.jar -a com.google.android.youtube | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | sort -V | tail -n 1)
+          fi
+
+          echo "YouTube Target Version: $TARGET_VERSION"
+
+          # Lưu vào file version_auto.txt
+          echo "$TARGET_VERSION" > version_auto.txt
+
+          echo "Lưu thành công vào file version_auto.txt"
+
+      - name: Upload version_auto.txt as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-version-auto
+          path: version_auto.txt
