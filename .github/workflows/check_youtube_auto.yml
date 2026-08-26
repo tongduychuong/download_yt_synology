@@ -15,52 +15,51 @@ jobs:
       - name: Fetch Latest YouTube Version Supported
         id: fetch-version
         run: |
-          # 1. Lấy thông tin release mới nhất từ MorpheApp/morphe-patches
+          # 1. Lấy API release mới nhất từ MorpheApp/morphe-patches
           RELEASE_JSON=$(curl -sH "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest")
 
-          # 2. Thử lọc phiên bản YouTube trực tiếp từ nội dung Release Notes (dạng markdown/text)
-          VERSION=$(echo "$RELEASE_JSON" | jq -r '.body // empty' | grep -oP 'com\.google\.android\.youtube.*?\b\d+\.\d+\.\d+\b' | grep -oP '\d+\.\d+\.\d+' | sort -V | tail -n 1)
+          # 2. Lấy link tải của tệp gói patch (.mpp)
+          MPP_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name | endsWith(".mpp")) | .browser_download_url' | head -n 1)
 
-          # 3. Nếu Release Notes không chứa version, tải asset patches.json (hoặc .zip chứa patches.json)
-          if [ -z "$VERSION" ] || [ "$VERSION" == "null" ]; then
-            # Tìm URL tải file .json hoặc .zip trong phần assets của Release
-            ASSET_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name | test("patches.*\\.(json|zip)$")) | .browser_download_url' | head -n 1)
-
-            if [ -n "$ASSET_URL" ] && [ "$ASSET_URL" != "null" ]; then
-              if [[ "$ASSET_URL" == *.zip ]]; then
-                curl -sL "$ASSET_URL" -o patches_bundle.zip
-                unzip -o patches_bundle.zip -d extracted_patches/
-                PATCHES_FILE=$(find extracted_patches -name "patches.json" | head -n 1)
-              else
-                curl -sL "$ASSET_URL" -o patches.json
-                PATCHES_FILE="patches.json"
-              fi
-
-              # Parse file patches.json để lấy phiên bản YouTube hỗ trợ cao nhất
-              if [ -f "$PATCHES_FILE" ]; then
-                VERSION=$(jq -r '
-                  .[]? 
-                  | select(.compatiblePackages != null) 
-                  | .compatiblePackages[]? 
-                  | select(.name == "com.google.android.youtube") 
-                  | .versions[]?
-                ' "$PATCHES_FILE" | sort -V | tail -n 1)
-              fi
-            fi
+          if [ -z "$MPP_URL" ] || [ "$MPP_URL" == "null" ]; then
+            echo "Lỗi: Không tìm thấy tệp .mpp trong Release mới nhất!"
+            exit 1
           fi
 
-          # 4. Kiểm tra kết quả
+          echo "Đang tải tệp patch: $MPP_URL"
+          curl -sL "$MPP_URL" -o patch_bundle.zip
+
+          # 3. Giải nén tệp .mpp (bản chất là zip) để lấy patches.json
+          unzip -o patch_bundle.zip -d extracted_bundle/
+          
+          PATCHES_FILE=$(find extracted_bundle -name "patches.json" | head -n 1)
+
+          if [ ! -f "$PATCHES_FILE" ]; then
+            echo "Lỗi: Không tìm thấy tệp patches.json bên trong gói patch!"
+            exit 1
+          fi
+
+          # 4. Trích xuất phiên bản YouTube (com.google.android.youtube) hỗ trợ cao nhất
+          VERSION=$(jq -r '
+            .[]? 
+            | select(.compatiblePackages != null) 
+            | .compatiblePackages[]? 
+            | select(.name == "com.google.android.youtube") 
+            | .versions[]?
+          ' "$PATCHES_FILE" | sort -V | tail -n 1)
+
+          # 5. Kiểm tra kết quả thu được
           if [ -z "$VERSION" ] || [ "$VERSION" == "null" ]; then
-            echo "Lỗi: Không tìm thấy phiên bản YouTube phù hợp!"
+            echo "Lỗi: Không tìm thấy phiên bản YouTube phù hợp trong patches.json!"
             exit 1
           fi
 
           echo "Phiên bản YouTube hỗ trợ mới nhất: $VERSION"
 
-          # 5. Ghi vào file version_auto.txt
+          # 6. Ghi vào file version_auto.txt
           echo "$VERSION" > version_auto.txt
-          echo "Đã ghi $VERSION vào file version_auto.txt"
+          echo "Đã xuất thành công $VERSION vào file version_auto.txt"
 
       - name: Commit and Push version_auto.txt
         run: |
@@ -71,6 +70,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "Không có thay đổi về version."
           else
-            git commit -m "build: Cập nhật YouTube version tự động ($VERSION) từ Morphe"
+            git commit -m "build: Cập nhật YouTube version hỗ trợ ($VERSION) từ Morphe"
             git push
           fi
