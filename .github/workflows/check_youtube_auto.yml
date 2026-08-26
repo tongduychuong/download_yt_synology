@@ -23,56 +23,71 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Sử dụng GitHub CLI (gh) có sẵn để tránh lỗi Rate Limit và JSON Null
-          echo "Fetching latest release URLs using GitHub CLI..."
-          
-          # Lấy URL tải morphe-cli
-          CLI_URL=$(gh api repos/MorpheApp/morphe-cli/releases/latest --jq '.assets[] | select(.name | endswith(".jar")) | .browser_download_url' | head -n 1)
-          
-          # Lấy URL tải morphe-patches (hỗ trợ cả .jar và .morphe / .rvp)
-          PATCHES_URL=$(gh api repos/MorpheApp/morphe-patches/releases/latest --jq '.assets[] | select(.name | test("\\.(jar|rvp|morphe)$")) | .browser_download_url' | head -n 1)
+          echo "=== 1. Tải morphe-cli ==="
+          CLI_URL=$(gh api repos/MorpheApp/morphe-cli/releases/latest --jq '.assets[]?.browser_download_url | select(endswith(".jar"))' | head -n 1)
 
           if [ -z "$CLI_URL" ]; then
-            echo "LỖI: Không thể tìm thấy file .jar của morphe-cli!"
-            exit 1
+            echo "Không thấy Release Asset cho CLI, tìm file Jar trong Packages/Releases..."
+            CLI_URL=$(gh api repos/MorpheApp/morphe-cli/releases --jq '.[0].assets[]?.browser_download_url' | grep '\.jar$' | head -n 1)
           fi
 
-          if [ -z "$PATCHES_URL" ]; then
-            echo "LỖI: Không thể tìm thấy file patches của morphe-patches!"
-            exit 1
-          fi
-
-          echo "Downloading CLI from: $CLI_URL"
-          echo "Downloading Patches from: $PATCHES_URL"
-
-          # 2. Tải file bằng curl kèm token xác thực
+          echo "Downloading CLI: $CLI_URL"
           curl -sL -H "Authorization: Bearer $GH_TOKEN" "$CLI_URL" -o morphe-cli.jar
-          
-          # Đặt tên file patch theo phần mở rộng tương ứng
-          PATCH_EXT="${PATCHES_URL##*.}"
-          curl -sL -H "Authorization: Bearer $GH_TOKEN" "$PATCHES_URL" -o "morphe-patches.$PATCH_EXT"
-          
-          echo "PATCH_FILE=morphe-patches.$PATCH_EXT" >> $GITHUB_ENV
+
+          echo "=== 2. Tải morphe-patches ==="
+          # Thử lấy file đính kèm từ Release
+          PATCHES_URL=$(gh api repos/MorpheApp/morphe-patches/releases/latest --jq '.assets[]?.browser_download_url' | head -n 1)
+
+          if [ -n "$PATCHES_URL" ]; then
+            echo "Phát hiện file patch trong Release: $PATCHES_URL"
+            PATCH_EXT="${PATCHES_URL##*.}"
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" "$PATCHES_URL" -o "morphe-patches.$PATCH_EXT"
+            echo "PATCH_FILE=morphe-patches.$PATCH_EXT" >> $GITHUB_ENV
+          else
+            echo "Release không có Asset! Chuyển sang tải gói Maven/Package đính kèm mới nhất..."
+            # Lấy thông tin Package/Jar phát hành mới nhất từ API GitHub Packages
+            PKG_URL=$(gh api orgs/MorpheApp/packages/maven/app.morphe.patches.morphe-patches/versions --jq '.[0].assets[]?.browser_download_url | select(endswith(".jar") or endswith(".morphe"))' | head -n 1)
+            
+            if [ -z "$PKG_URL" ]; then
+               # Nếu là tài khoản User cá nhân thay vì Organization
+               PKG_URL=$(gh api users/MorpheApp/packages/maven/app.morphe.patches.morphe-patches/versions --jq '.[0].assets[]?.browser_download_url | select(endswith(".jar") or endswith(".morphe"))' | head -n 1)
+            fi
+
+            if [ -z "$PKG_URL" ]; then
+              echo "LỖI: Không tìm thấy gói morphe-patches! Đang kiểm tra danh sách Releases hiện tại:"
+              gh api repos/MorpheApp/morphe-patches/releases/latest
+              exit 1
+            fi
+
+            echo "Downloading Patches Package: $PKG_URL"
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" "$PKG_URL" -o morphe-patches.jar
+            echo "PATCH_FILE=morphe-patches.jar" >> $GITHUB_ENV
+          fi
 
       - name: Extract Target Version and Save to File
         id: extract_version
         run: |
-          # 3. Trích xuất phiên bản khuyến nghị cho com.google.android.youtube
-          TARGET_VERSION=$(java -jar morphe-cli.jar list-patches -m "$PATCH_FILE" -a com.google.android.youtube 2>&1 | grep -i "recommended" | awk '{print $NF}' | head -n 1)
+          echo "=== 3. Trích xuất phiên bản YouTube Target ==="
+          # Chạy CLI kiểm tra thông tin target
+          CLI_OUTPUT=$(java -jar morphe-cli.jar list-patches -m "$PATCH_FILE" -a com.google.android.youtube 2>&1)
+          
+          # Lấy version nhãn recommended
+          TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -i "recommended" | awk '{print $NF}' | head -n 1)
 
-          # Dự phòng: Nếu không tìm thấy nhãn "recommended", trích xuất phiên bản cao nhất
+          # Nếu không có chữ recommended, lấy version cao nhất hỗ trợ
           if [ -z "$TARGET_VERSION" ]; then
-            TARGET_VERSION=$(java -jar morphe-cli.jar list-patches -m "$PATCH_FILE" -a com.google.android.youtube 2>&1 | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | sort -V | tail -n 1)
+            TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | sort -V | tail -n 1)
           fi
 
           if [ -z "$TARGET_VERSION" ]; then
-            echo "LỖI: Không đọc được thông tin version từ CLI!"
+            echo "LỖI: Không thể trích xuất version. Output từ CLI:"
+            echo "$CLI_OUTPUT"
             exit 1
           fi
 
-          echo "YouTube Target Version: $TARGET_VERSION"
+          echo "YouTube Target Version tìm được: $TARGET_VERSION"
 
-          # Lưu vào file version_auto.txt
+          # Ghi vào file version_auto.txt
           echo "$TARGET_VERSION" > version_auto.txt
           echo "Lưu thành công vào file version_auto.txt"
 
