@@ -49,17 +49,22 @@ jobs:
         run: |
           echo "=== 3. Trích xuất phiên bản YouTube Target ==="
           
-          # Sử dụng option --patches theo đúng yêu cầu của Morphe CLI mới
-          CLI_OUTPUT=$(java -jar morphe-cli.jar list-patches --patches="$PATCH_FILE" -a com.google.android.youtube 2>&1 || true)
+          # Đã loại bỏ tùy chọn -a (không còn hỗ trợ ở CLI mới)
+          CLI_OUTPUT=$(java -jar morphe-cli.jar list-patches --patches="$PATCH_FILE" 2>&1 || true)
           
           echo "--- Dynamic CLI Output Log ---"
-          echo "$CLI_OUTPUT"
+          echo "$CLI_OUTPUT" | head -n 40 # In 40 dòng đầu để xem cấu trúc log
           echo "------------------------------"
 
-          # Lấy phiên bản khuyến nghị (Recommended Version)
-          TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -i "recommended" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | head -n 1)
+          # 1. Lọc phần log của package YouTube (com.google.android.youtube) và lấy Recommended Version
+          TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -A 10 -i "com.google.android.youtube" | grep -i "recommended" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | head -n 1)
 
-          # Dự phòng: Lấy phiên bản tương thích cao nhất nếu không gắn nhãn recommended
+          # 2. Dự phòng: Nếu không lọc theo block YouTube, lấy phiên bản khuyến nghị đầu tiên tìm thấy
+          if [ -z "$TARGET_VERSION" ]; then
+            TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -i "recommended" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | head -n 1)
+          fi
+
+          # 3. Dự phòng 2: Lấy phiên bản tương thích dạng XX.XX.XX cao nhất trong output
           if [ -z "$TARGET_VERSION" ]; then
             TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | sort -V | tail -n 1)
           fi
