@@ -1,89 +1,52 @@
-name: Get Morphe Target YouTube Version Auto
+name: Get Supported YouTube Version and Save
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Cho phép chạy thủ công
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *' # Chạy tự động vào 00:00 UTC mỗi ngày
 
 jobs:
-  get-and-save-version:
+  get-and-save-youtube-version:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Fetch Latest Morphe CLI and Patches
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch Latest YouTube Version Supported
+        id: fetch-version
         run: |
-          echo "=== 1. Tải morphe-cli ==="
-          CLI_URL=$(gh api repos/MorpheApp/morphe-cli/releases/latest --jq '.assets[]?.browser_download_url | select(endswith(".jar"))' | head -n 1)
-          if [ -z "$CLI_URL" ]; then
-            CLI_URL=$(gh api repos/MorpheApp/morphe-cli/releases --jq '.[0].assets[]?.browser_download_url' | grep '\.jar$' | head -n 1)
-          fi
-          echo "Downloading CLI: $CLI_URL"
-          curl -sL -H "Authorization: Bearer $GH_TOKEN" "$CLI_URL" -o morphe-cli.jar
+          # 1. Tải thông tin release mới nhất từ Morphe Patches
+          RESPONSE=$(curl -s https://api.github.com/repos/morphe-modules/morphe-patches/releases/latest)
 
-          echo "=== 2. Tải morphe-patches ==="
-          PATCHES_URL=$(gh api repos/MorpheApp/morphe-patches/releases/latest --jq '.assets[]?.browser_download_url' | head -n 1)
-          
-          if [ -n "$PATCHES_URL" ]; then
-            PATCH_EXT="${PATCHES_URL##*.}"
-            curl -sL -H "Authorization: Bearer $GH_TOKEN" "$PATCHES_URL" -o "morphe-patches.$PATCH_EXT"
-            echo "PATCH_FILE=morphe-patches.$PATCH_EXT" >> $GITHUB_ENV
-          else
-            PKG_URL=$(gh api repos/MorpheApp/morphe-patches/releases --jq '.[0].assets[]?.browser_download_url' | head -n 1)
-            curl -sL -H "Authorization: Bearer $GH_TOKEN" "$PKG_URL" -o morphe-patches.jar
-            echo "PATCH_FILE=morphe-patches.jar" >> $GITHUB_ENV
+          # 2. Trích xuất phiên bản YouTube từ release body
+          VERSION=$(echo "$RESPONSE" | jq -r '.body' | grep -oP 'com\.google\.android\.youtube.*?\b\d+\.\d+\.\d+\b' | grep -oP '\d+\.\d+\.\d+' | sort -V | tail -n 1)
+
+          # 3. Nếu không tìm thấy trong release body, lấy từ patches.json
+          if [ -z "$VERSION" ]; then
+            VERSION=$(curl -sL https://raw.githubusercontent.com/morphe-modules/morphe-patches/main/patches.json | jq -r '.[] | select(.compatiblePackages[]?.name == "com.google.android.youtube") | .compatiblePackages[] | select(.name == "com.google.android.youtube") | .versions[]?' | sort -V | tail -n 1)
           fi
 
-      - name: Extract Target Version and Save to File
-        id: extract_version
-        run: |
-          echo "=== 3. Trích xuất phiên bản YouTube Target ==="
-          
-          # Đã loại bỏ tùy chọn -a (không còn hỗ trợ ở CLI mới)
-          CLI_OUTPUT=$(java -jar morphe-cli.jar list-patches --patches="$PATCH_FILE" 2>&1 || true)
-          
-          echo "--- Dynamic CLI Output Log ---"
-          echo "$CLI_OUTPUT" | head -n 40 # In 40 dòng đầu để xem cấu trúc log
-          echo "------------------------------"
-
-          # 1. Lọc phần log của package YouTube (com.google.android.youtube) và lấy Recommended Version
-          TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -A 10 -i "com.google.android.youtube" | grep -i "recommended" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | head -n 1)
-
-          # 2. Dự phòng: Nếu không lọc theo block YouTube, lấy phiên bản khuyến nghị đầu tiên tìm thấy
-          if [ -z "$TARGET_VERSION" ]; then
-            TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -i "recommended" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | head -n 1)
-          fi
-
-          # 3. Dự phòng 2: Lấy phiên bản tương thích dạng XX.XX.XX cao nhất trong output
-          if [ -z "$TARGET_VERSION" ]; then
-            TARGET_VERSION=$(echo "$CLI_OUTPUT" | grep -E -o "([0-9]+\.[0-9]+\.[0-9]+)" | sort -V | tail -n 1)
-          fi
-
-          if [ -z "$TARGET_VERSION" ]; then
-            echo "LỖI: Không thể lọc được phiên bản từ Output của CLI!"
+          if [ -z "$VERSION" ]; then
+            echo "Không tìm thấy phiên bản phù hợp!"
             exit 1
           fi
 
-          echo "=========================================="
-          echo "SUCCESS: YouTube Target Version = $TARGET_VERSION"
-          echo "=========================================="
+          echo "Phiên bản YouTube tìm thấy: $VERSION"
 
-          # Ghi vào file version_auto.txt
-          echo "$TARGET_VERSION" > version_auto.txt
-          echo "Đã ghi thành công phiên bản vào file version_auto.txt"
+          # 4. Xuất phiên bản vào file version_auto.txt
+          echo "$VERSION" > version_auto.txt
+          echo "Đã ghi vào file version_auto.txt"
 
-      - name: Upload version_auto.txt as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtube-version-auto
-          path: version_auto.txt
+      - name: Commit and Push version_auto.txt
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add version_auto.txt
+          
+          # Kiểm tra nếu file có sự thay đổi mới commit
+          if git diff --staged --quiet; then
+            echo "Không có thay đổi về version, không cần commit."
+          else
+            git commit -m "build: Cập nhật YouTube version tự động vào version_auto.txt"
+            git push
+          fi
