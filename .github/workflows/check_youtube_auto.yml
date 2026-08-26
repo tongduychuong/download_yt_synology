@@ -1,9 +1,9 @@
 name: Get Morphe Target YouTube Version Auto
 
 on:
-  workflow_dispatch: # Cho phép bấm chạy thủ công
+  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # Tự động chạy mỗi ngày vào lúc 00:00 UTC
+    - cron: '0 0 * * *'
 
 jobs:
   get-and-save-version:
@@ -21,12 +21,27 @@ jobs:
 
       - name: Fetch Latest Morphe CLI and Patches
         run: |
-          # Lấy URL bản mới nhất từ GitHub Release
-          CLI_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | grep "browser_download_url" | grep "\.jar" | cut -d '"' -f 4)
-          PATCHES_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | grep "browser_download_url" | grep "\.jar" | cut -d '"' -f 4)
+          # 1. Trích xuất URL chính xác bằng jq
+          CLI_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url' | head -n 1)
+          PATCHES_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url' | head -n 1)
 
-          curl -sL $CLI_URL -o morphe-cli.jar
-          curl -sL $PATCHES_URL -o morphe-patches.jar
+          # 2. Kiểm tra nếu không lấy được URL thì dừng lại và báo lỗi rõ ràng
+          if [ -z "$CLI_URL" ] || [ "$CLI_URL" == "null" ]; then
+            echo "LỖI: Không lấy được URL của morphe-cli! Kiểm tra lại API GitHub hoặc Repo."
+            exit 1
+          fi
+
+          if [ -z "$PATCHES_URL" ] || [ "$PATCHES_URL" == "null" ]; then
+            echo "LỖI: Không lấy được URL của morphe-patches! Kiểm tra lại API GitHub hoặc Repo."
+            exit 1
+          fi
+
+          echo "Downloading CLI from: $CLI_URL"
+          echo "Downloading Patches from: $PATCHES_URL"
+
+          # 3. Tải file về
+          curl -sL "$CLI_URL" -o morphe-cli.jar
+          curl -sL "$PATCHES_URL" -o morphe-patches.jar
 
       - name: Extract Target Version and Save to File
         id: extract_version
@@ -43,7 +58,6 @@ jobs:
 
           # Lưu vào file version_auto.txt
           echo "$TARGET_VERSION" > version_auto.txt
-
           echo "Lưu thành công vào file version_auto.txt"
 
       - name: Upload version_auto.txt as Artifact
