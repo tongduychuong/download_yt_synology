@@ -1,9 +1,9 @@
 name: Get Supported YouTube Version and Save
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Cho phép chạy thủ công
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *' # Chạy tự động vào 00:00 UTC mỗi ngày
 
 jobs:
   get-and-save-youtube-version:
@@ -15,37 +15,37 @@ jobs:
       - name: Fetch Latest YouTube Version Supported
         id: fetch-version
         run: |
-          # 1. Tải file patches.json trực tiếp với Header authentication để tránh dính Rate Limit
-          RAW_JSON=$(curl -sH "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://raw.githubusercontent.com/morphe-modules/morphe-patches/main/patches.json")
+          # 1. Gọi API GitHub chính thức của MorpheApp
+          RESPONSE=$(curl -sH "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest")
 
-          # 2. Kiểm tra dữ liệu tải về có phải JSON hợp lệ không
-          if ! echo "$RAW_JSON" | jq empty > /dev/null 2>&1; then
-            echo "Lỗi: Dữ liệu tải về không phải JSON hợp lệ hoặc không tìm thấy repository!"
-            echo "Response: $RAW_JSON"
+          # 2. Kiểm tra xem API có trả về JSON hợp lệ không
+          if ! echo "$RESPONSE" | jq empty > /dev/null 2>&1; then
+            echo "Lỗi: Không thể lấy dữ liệu từ GitHub API!"
+            echo "Chi tiết: $RESPONSE"
             exit 1
           fi
 
-          # 3. Lọc phiên bản com.google.android.youtube tương thích cao nhất
-          VERSION=$(echo "$RAW_JSON" | jq -r '
-            .[] 
-            | select(.compatiblePackages != null) 
-            | .compatiblePackages[] 
-            | select(.name == "com.google.android.youtube") 
-            | .versions[]?
-          ' | sort -V | tail -n 1)
+          # 3. Trích xuất danh sách phiên bản YouTube từ nội dung Release (Release Notes)
+          VERSION=$(echo "$RESPONSE" | jq -r '.body // empty' | grep -oP 'com\.google\.android\.youtube.*?\b\d+\.\d+\.\d+\b' | grep -oP '\d+\.\d+\.\d+' | sort -V | tail -n 1)
 
-          # 4. Nếu không lọc được từ patches.json, thử đọc từ Release Notes của GitHub API
+          # 4. Nếu không có trong Release Notes, lấy trực tiếp từ file patches.json
           if [ -z "$VERSION" ] || [ "$VERSION" == "null" ]; then
-            RELEASE_BODY=$(curl -sH "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/morphe-modules/morphe-patches/releases/latest" | jq -r '.body // empty')
-            
-            VERSION=$(echo "$RELEASE_BODY" | grep -oP 'com\.google\.android\.youtube.*?\b\d+\.\d+\.\d+\b' | grep -oP '\d+\.\d+\.\d+' | sort -V | tail -n 1)
+            RAW_JSON=$(curl -sH "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://raw.githubusercontent.com/MorpheApp/morphe-patches/main/patches.json")
+
+            VERSION=$(echo "$RAW_JSON" | jq -r '
+              .[]?
+              | select(.compatiblePackages != null)
+              | .compatiblePackages[]?
+              | select(.name == "com.google.android.youtube")
+              | .versions[]?
+            ' | sort -V | tail -n 1)
           fi
 
-          # 5. Kiểm tra kết quả cuối cùng
+          # 5. Kiểm tra kết quả
           if [ -z "$VERSION" ] || [ "$VERSION" == "null" ]; then
-            echo "Không tìm thấy phiên bản phù hợp!"
+            echo "Không tìm thấy phiên bản YouTube phù hợp trong Morphe Patches!"
             exit 1
           fi
 
@@ -64,6 +64,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "Không có thay đổi về version."
           else
-            git commit -m "build: Cập nhật YouTube version tự động ($VERSION) vào version_auto.txt"
+            git commit -m "build: Cập nhật YouTube version tự động ($VERSION) từ MorpheApp"
             git push
           fi
