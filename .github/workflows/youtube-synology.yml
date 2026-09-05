@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   download:
@@ -66,10 +67,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ env.VERSION }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -e
-          TAG="youtube-${VERSION}"
 
+          # Nếu chạy manual (workflow_dispatch), bỏ qua check và ép chạy tiếp
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "======================================"
+            echo "Chạy thủ công: Bỏ qua kiểm tra release cũ."
+            echo "======================================"
+            echo "RELEASE_EXISTS=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          TAG="youtube-${VERSION}"
           echo "Checking if release $TAG already exists..."
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -221,6 +232,19 @@ jobs:
           echo "TITLE: $TITLE"
           echo "======================================"
 
+          # Xóa release cũ nếu tồn tại (đặc biệt hữu ích khi chạy manual)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Deleting old release..."
+            gh release delete "$TAG" --yes
+          fi
+
+          # Xóa git tag cũ nếu tồn tại
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Deleting old tag..."
+            git push origin --delete "$TAG" || true
+          fi
+
+          # Tạo release mới
           gh release create \
             "$TAG" \
             "$APK" \
