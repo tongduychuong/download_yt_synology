@@ -270,3 +270,21 @@ jobs:
             youtube_4.tmp
 
           echo "Cleanup completed."
+
+      # ==================================================
+      # Delete excess workflow runs
+      # ==================================================
+
+      - name: Delete excess workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "Fetching workflow runs..."
+          run_ids=$(gh run list --limit 100 --json databaseId -q '.[5:][].databaseId')
+          
+          for id in $run_ids; do
+            echo "Deleting run ID: $id"
+            gh run delete "$id" || true
+          done
+          echo "Cleanup completed!"
