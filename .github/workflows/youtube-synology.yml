@@ -7,6 +7,11 @@ on:
         description: 'YouTube Version (để trống nếu muốn dùng version.txt)'
         required: false
         type: string
+      force_rebuild:
+        description: 'Ép chạy lại và ghi đè release cũ (Bật tick nếu muốn)'
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "0 22 * * *"
 
@@ -68,16 +73,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ env.VERSION }}
           EVENT_NAME: ${{ github.event_name }}
+          FORCE_REBUILD: ${{ github.event.inputs.force_rebuild }}
         run: |
           set -e
 
-          # Nếu chạy manual (workflow_dispatch), bỏ qua check và ép chạy tiếp
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "======================================"
-            echo "Chạy thủ công: Bỏ qua kiểm tra release cũ."
-            echo "======================================"
-            echo "RELEASE_EXISTS=false" >> "$GITHUB_ENV"
-            exit 0
+            if [ "$FORCE_REBUILD" = "true" ]; then
+              echo "======================================"
+              echo "Chạy thủ công (Force Rebuild): Bỏ qua kiểm tra release cũ."
+              echo "======================================"
+              echo "RELEASE_EXISTS=false" >> "$GITHUB_ENV"
+              exit 0
+            else
+              echo "======================================"
+              echo "Chạy thủ công: Vẫn kiểm tra release cũ (vì chưa tick force)."
+              echo "======================================"
+            fi
           fi
 
           TAG="youtube-${VERSION}"
@@ -232,7 +243,7 @@ jobs:
           echo "TITLE: $TITLE"
           echo "======================================"
 
-          # Xóa release cũ nếu tồn tại (đặc biệt hữu ích khi chạy manual)
+          # Xóa release cũ nếu tồn tại
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Deleting old release..."
             gh release delete "$TAG" --yes
