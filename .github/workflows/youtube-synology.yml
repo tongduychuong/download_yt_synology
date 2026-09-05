@@ -2,7 +2,11 @@ name: Download YouTube APK
 
 on:
   workflow_dispatch:
-
+    inputs:
+      version:
+        description: 'YouTube Version (để trống nếu muốn dùng version.txt)'
+        required: false
+        type: string
   schedule:
     - cron: "0 22 * * *"
 
@@ -10,13 +14,10 @@ permissions:
   contents: write
 
 jobs:
-
   download:
-
     runs-on: ubuntu-latest
 
     steps:
-
       # ==================================================
       # CHECKOUT
       # ==================================================
@@ -29,20 +30,23 @@ jobs:
       # READ VERSION
       # ==================================================
 
-      - name: Read version.txt
+      - name: Read version
         shell: bash
         run: |
           set -e
 
-          if [ ! -f "version.txt" ]; then
-            echo "ERROR: Không tìm thấy version.txt"
-            exit 1
-          fi
-
-          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+          VERSION="${{ github.event.inputs.version }}"
 
           if [ -z "$VERSION" ]; then
-            echo "ERROR: version.txt rỗng"
+            if [ ! -f "version.txt" ]; then
+              echo "ERROR: Không tìm thấy version.txt và bạn chưa nhập version thủ công."
+              exit 1
+            fi
+            VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+          fi
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: Version rỗng"
             exit 1
           fi
 
@@ -54,10 +58,37 @@ jobs:
 
 
       # ==================================================
+      # CHECK EXISTING RELEASE
+      # ==================================================
+
+      - name: Check existing release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ env.VERSION }}
+        run: |
+          set -e
+          TAG="youtube-${VERSION}"
+
+          echo "Checking if release $TAG already exists..."
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "RELEASE_EXISTS=true" >> "$GITHUB_ENV"
+            echo "======================================"
+            echo "Release $TAG đã tồn tại. Bỏ qua việc tải xuống."
+            echo "======================================"
+          else
+            echo "RELEASE_EXISTS=false" >> "$GITHUB_ENV"
+            echo "Release chưa tồn tại. Tiếp tục quá trình..."
+          fi
+
+
+      # ==================================================
       # SETUP NODE
       # ==================================================
 
       - name: Setup Node.js
+        if: env.RELEASE_EXISTS != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -68,6 +99,7 @@ jobs:
       # ==================================================
 
       - name: Check apkmirror.js
+        if: env.RELEASE_EXISTS != 'true'
         shell: bash
         run: |
           set -e
@@ -86,6 +118,7 @@ jobs:
       # ==================================================
 
       - name: Download YouTube APK
+        if: env.RELEASE_EXISTS != 'true'
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -117,6 +150,7 @@ jobs:
       # ==================================================
 
       - name: Verify APK
+        if: env.RELEASE_EXISTS != 'true'
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -147,6 +181,7 @@ jobs:
       # ==================================================
 
       - name: Generate SHA256
+        if: env.RELEASE_EXISTS != 'true'
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -166,6 +201,7 @@ jobs:
       # ==================================================
 
       - name: Create GitHub Release
+        if: env.RELEASE_EXISTS != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -185,53 +221,12 @@ jobs:
           echo "TITLE: $TITLE"
           echo "======================================"
 
-
-          # ------------------------------------------------
-          # DELETE OLD RELEASE
-          # ------------------------------------------------
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-
-            echo "Release already exists."
-            echo "Deleting old release..."
-
-            gh release delete \
-              "$TAG" \
-              --yes
-
-          fi
-
-
-          # ------------------------------------------------
-          # DELETE OLD TAG IF EXISTS
-          # ------------------------------------------------
-
-          if git ls-remote \
-            --tags \
-            origin \
-            "refs/tags/$TAG" |
-            grep -q "$TAG"; then
-
-            echo "Deleting old tag..."
-
-            git push \
-              origin \
-              --delete "$TAG" || true
-
-          fi
-
-
-          # ------------------------------------------------
-          # CREATE RELEASE
-          # ------------------------------------------------
-
           gh release create \
             "$TAG" \
             "$APK" \
             "$SHA" \
             --title "$TITLE" \
             --notes "YouTube ${VERSION} APK"
-
 
           echo "======================================"
           echo "RELEASE CREATED"
@@ -243,6 +238,7 @@ jobs:
       # ==================================================
 
       - name: Show Release
+        if: env.RELEASE_EXISTS != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -270,6 +266,7 @@ jobs:
             youtube_4.tmp
 
           echo "Cleanup completed."
+
 
       # ==================================================
       # Delete excess workflow runs
